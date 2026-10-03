@@ -1,0 +1,8 @@
+{
+  "voicemail_id": "vm-002",
+  "caller_name": null,
+  "caller_number": "+13125550199",
+  "received_at": "2026-10-01T23:48:00+00:00",
+  "expected_verdict": "SCAM",
+  "transcript": "Grandma, it's me. Please don't be mad. I was in a car accident and the police arrested me. I need two thousand dollars for bail right away. Please don't tell Mom and Dad. My lawyer will explain how to send the money with gift cards."
+}

@@ -1,0 +1,8 @@
+{
+  "voicemail_id": "vm-004",
+  "caller_name": "First National Bank",
+  "caller_number": "+18005550188",
+  "received_at": "2026-10-02T22:17:00+00:00",
+  "expected_verdict": "SCAM",
+  "transcript": "This is the fraud department at First National Bank. We detected a suspicious purchase of nine hundred ninety-nine dollars on your debit card, and your card has been locked. Press 1 and verify your PIN and card number with a representative. Act now to protect your account."
+}

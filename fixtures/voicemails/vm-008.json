@@ -1,0 +1,8 @@
+{
+  "voicemail_id": "vm-008",
+  "caller_name": "Sarah",
+  "caller_number": "+15035550175",
+  "received_at": "2026-10-03T15:05:00+00:00",
+  "expected_verdict": "LEGITIMATE",
+  "transcript": "Hi Mom, it's Sarah. Just checking in. The kids want to come over for dinner on Sunday. Call me back when you get a chance. Love you."
+}

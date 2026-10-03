@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "amazon-devices-buildertools": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@amazon-devices/amazon-devices-buildertools-mcp@latest"
+      ],
+      "env": {}
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "voicemail_id": "vm-006",
+  "caller_name": "Maple Street Pharmacy",
+  "caller_number": "+15035550110",
+  "received_at": "2026-10-02T19:30:00+00:00",
+  "expected_verdict": "LEGITIMATE",
+  "transcript": "Hi, this is Maple Street Pharmacy calling for Eleanor. Your prescription is ready for pickup. We're open until nine tonight. Have a good evening."
+}

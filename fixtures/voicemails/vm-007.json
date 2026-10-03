@@ -1,0 +1,8 @@
+{
+  "voicemail_id": "vm-007",
+  "caller_name": "Dr. Patel's Office",
+  "caller_number": "+15035550142",
+  "received_at": "2026-10-01T16:00:00+00:00",
+  "expected_verdict": "LEGITIMATE",
+  "transcript": "Hello, this is Doctor Patel's office with a reminder about your appointment on Thursday at ten thirty in the morning. If you need to reschedule, please call the office at your convenience. Thank you."
+}

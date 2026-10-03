@@ -1,0 +1,8 @@
+{
+  "voicemail_id": "vm-001",
+  "caller_name": null,
+  "caller_number": "+12025550147",
+  "received_at": "2026-10-03T16:41:00+00:00",
+  "expected_verdict": "SCAM",
+  "transcript": "Hello, this is Officer Daniel Brooks with the Internal Revenue Service. This is your final notice. There is a warrant for your arrest for unpaid back taxes. To avoid legal action, you must pay immediately with Google Play gift cards. Do not tell anyone about this call. Press 1 now to speak with an agent."
+}

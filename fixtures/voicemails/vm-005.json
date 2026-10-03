@@ -1,0 +1,8 @@
+{
+  "voicemail_id": "vm-005",
+  "caller_name": "Social Security Office",
+  "caller_number": "+12105550166",
+  "received_at": "2026-09-30T18:25:00+00:00",
+  "expected_verdict": "SCAM",
+  "transcript": "This call is from the Social Security Administration. Your Social Security number has been suspended because of suspicious activity. If you do not call us back within 24 hours, a lawsuit will be filed against you. Press 1 to speak with an officer."
+}

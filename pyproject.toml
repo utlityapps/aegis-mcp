@@ -1,0 +1,126 @@
+# =============================================================================
+# Aegis — a voice-native scam-defense companion for seniors, on Alexa+
+# =============================================================================
+# Drop this file into the Aegis repo root (next to README.md). It is the
+# single source of truth for the Python environment: what Aegis is, what it
+# depends on, and the product agreements the build must honor.
+#
+# Build status as of 2026-10-03 (verified on Python 3.12.15, mcp 2.2.0):
+#   - tests/: 163/163 pass (test_aegis.py engine, test_tools.py handlers, test_hardening.py audit,
+#     test_stress.py stress-test regressions)
+#   - server/: 22/22 MCP smoke checks pass (server/smoke_test.py)
+# =============================================================================
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aegis"
+# NOTE: 0.1.0 is a starting version — the project had no version yet.
+version = "0.1.0"
+description = "A voice-native scam-defense companion for seniors, on Alexa+: a self-hosted MCP server that checks voicemails by voice request, with deterministic analysis and a permission-gated approve-to-act layer."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Ajayi", email = "aanuajayi@gmail.com" }]
+requires-python = ">=3.12"
+keywords = ["alexa", "alexa-plus", "mcp", "scam-detection", "elder-care", "voice", "voicemail"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications",
+    "Topic :: Security",
+]
+
+# Only the MCP server needs third-party packages. The analysis engine
+# (aegis/engine.py) and the demo server (demo/server.py) are stdlib-only
+# by design — the no-network guarantee is enforced by the test suite.
+dependencies = [
+    "mcp==2.2.0",        # Official MCP Python SDK — self-hosted server, Streamable HTTP transport
+    "uvicorn==0.54.0",   # ASGI server serving the Streamable HTTP endpoint
+    "starlette==1.7.0",  # HTTP layer under the MCP SDK
+    "jsonschema==4.26.0",  # server checks every tool result against its outputSchema before sending (already required by mcp)
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",      # test runner: `pytest tests/ -q` (163 tests)
+]
+
+[project.scripts]
+# `aegis-server` starts the MCP server (same as `python -m server` from the repo root).
+# Flags/env: --host / AEGIS_HOST (default 127.0.0.1), --port / AEGIS_PORT (default 8000),
+# --stateless / --no-stateless (default on). Endpoint: http://127.0.0.1:8000/mcp
+aegis-server = "server.server:main"
+
+[project.urls]
+Homepage = "https://github.com/utilityapps/aegis-mcp"
+Repository = "https://github.com/utilityapps/aegis-mcp"
+
+[tool.hatch.build.targets.wheel]
+packages = ["aegis", "server"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+# =============================================================================
+# [tool.aegis] — product agreements for Aegis, machine-readable.
+# Any agent working on this codebase (human or AI) must honor these.
+# They come from the project README and the decisions made with Ajayi.
+# =============================================================================
+[tool.aegis]
+concept = "Elder-care, voice-native voicemail scam defense for the Amazon Developer Hackathon Alexa+ track. No pasted text — the demo is a single voice request."
+
+demo_beat = "Alexa, ask Aegis to check the voicemail I just got from the IRS."
+
+[tool.aegis.engine]
+# The LLM-free design choice is deliberate and non-negotiable.
+deterministic = true
+stdlib_only = true
+no_network = true            # enforced by tests: engine source must not import network modules
+no_llm_verdicts = true       # no verdict ever comes from a model; heuristics only
+heuristics_count = 12        # fixed regex/keyword detectors with fixed weights
+verdict_scam_at = 60         # risk_score >= 60
+verdict_suspicious_at = 30   # 30 <= risk_score < 60, else LEGITIMATE
+api = ["analyze_voicemail", "explain_red_flags", "propose_actions", "approve_action", "reject_action"]
+speakable_flags = true       # every heuristic emits a senior-friendly sentence meant to be read aloud
+
+[tool.aegis.permission_layer]
+# The permission layer is a feature, not an afterthought.
+rule = "Nothing happens without an explicit yes. Actions are STAGED, never executed, until approved."
+flow = "propose -> approve -> execute"
+approval_tokens_single_use = true
+wrong_or_reused_token = "PermissionError"   # surfaced as an MCP tool error (isError: true)
+reject_drops_action = true
+approval_ttl_seconds = 600      # staged actions expire after 10 min (AEGIS_APPROVAL_TTL_SECONDS, 60-3600); see docs/architecture.md §9.3
+# A tool verifies it is approving the right KIND of action (can't sneak a report through the block tool).
+
+[tool.aegis.mcp_server]
+sdk = "mcp==2.2.0 (official Python SDK; MCPServer, called at runtime)"
+spec = "2025-11-25+"        # negotiated at runtime; smoke test asserts >= 2025-11-25
+accepted_protocol_versions = ["2025-11-25", "2025-06-18", "2025-03-26"]  # Alexa+ requests 2025-03-26; smoke test must also check it is accepted
+auth = "none"                # hackathon decision: no OAuth on the tunnel; simulated actions + fixture-only data + 64 KiB body cap
+transport = "streamable-http (stateless default)"
+tools = ["list_voicemails", "check_voicemail", "explain_red_flags", "block_number", "report_scam"]
+fixtures = 8                 # 5 scam + 3 legitimate, in fixtures/voicemails/
+fixture_required_fields = ["voicemail_id", "received_at", "caller_number"]  # caller_name optional; exactly one fixture matches "IRS"
+
+[tool.aegis.honest_limitations]
+actions_are_simulated = true  # receipts labeled simulated:true; no real blocks or reports
+receipts_say_practice_run = true  # spoken receipt says no real block/report was made
+fixtures_are_text = true      # scripted transcripts, no real STT/TTS
+english_only = true           # all 12 heuristics are English regex/keyword patterns
+caller_metadata_is_trusted_input = true
+in_memory_registries = true   # restart the server and pending approvals vanish
+
+[tool.aegis.track]
+name = "Amazon Developer Hackathon \"Build, Ship, Shape\" — Alexa+ track"
+deadline = "2026-10-23T12:00:00-07:00"
+repo_visibility = "public"  # decided 2026-10-03: public MIT repo `aegis-mcp` (qualifies for the Open Source mini challenge)
+video = "public, English, under 3 minutes, YouTube or Vimeo"
+submission_fields = ["repo link", "video link", "text description", "product feedback", "track selection (Alexa+)"]
+friction_log = "optional, drafted, worth up to 10% judging bonus"

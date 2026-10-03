@@ -1,0 +1,8 @@
+{
+  "voicemail_id": "vm-003",
+  "caller_name": "Medicare Benefits",
+  "caller_number": "+18885550123",
+  "received_at": "2026-10-02T14:12:00+00:00",
+  "expected_verdict": "SCAM",
+  "transcript": "Hello, this is the Medicare benefits office. Your Medicare card has expired, and your benefits will be suspended today. To mail your new card, we need to verify your Medicare number and your Social Security number. Please call us back immediately at this number."
+}
