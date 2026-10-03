@@ -123,7 +123,7 @@ The full protocol spec (schemas, error model, state machines) is in [`docs/archi
 ### 1. Install
 
 ```bash
-git clone https://github.com/utilityapps/aegis-mcp.git
+git clone https://github.com/utlityapps/aegis-mcp.git
 cd aegis-mcp
 python3.12 -m venv .venv
 source .venv/bin/activate

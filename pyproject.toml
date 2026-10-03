@@ -57,8 +57,8 @@ dev = [
 aegis-server = "server.server:main"
 
 [project.urls]
-Homepage = "https://github.com/utilityapps/aegis-mcp"
-Repository = "https://github.com/utilityapps/aegis-mcp"
+Homepage = "https://github.com/utlityapps/aegis-mcp"
+Repository = "https://github.com/utlityapps/aegis-mcp"
 
 [tool.hatch.build.targets.wheel]
 packages = ["aegis", "server"]
