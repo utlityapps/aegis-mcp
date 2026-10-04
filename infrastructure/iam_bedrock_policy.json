@@ -1,0 +1,32 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "InvokeOnlyTheApprovedModel",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": "arn:aws:bedrock:__AWS_REGION__::foundation-model/__BEDROCK_MODEL_ID__",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "__AWS_REGION__"
+        }
+      }
+    },
+    {
+      "Sid": "NeverManageBedrockResources",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock:Create*",
+        "bedrock:Delete*",
+        "bedrock:Put*",
+        "bedrock:Update*",
+        "bedrock:Tag*",
+        "bedrock:Untag*"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

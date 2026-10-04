@@ -6,9 +6,8 @@
 # depends on, and the product agreements the build must honor.
 #
 # Build status as of 2026-10-03 (verified on Python 3.12.15, mcp 2.2.0):
-#   - tests/: 163/163 pass (test_aegis.py engine, test_tools.py handlers, test_hardening.py audit,
-#     test_stress.py stress-test regressions)
-#   - server/: 22/22 MCP smoke checks pass (server/smoke_test.py)
+#   - tests/: 308/308 pass (engine, handlers, hardening, stress, resilience, ecosystem, telemetry/security)
+#   - server/: 23/23 smoke checks pass (server/smoke_test.py), incl. the Ring -> Bee -> Fire TV chain
 # =============================================================================
 
 [build-system]
@@ -42,12 +41,14 @@ dependencies = [
     "mcp==2.2.0",        # Official MCP Python SDK — self-hosted server, Streamable HTTP transport
     "uvicorn==0.54.0",   # ASGI server serving the Streamable HTTP endpoint
     "starlette==1.7.0",  # HTTP layer under the MCP SDK
-    "jsonschema==4.26.0",  # server checks every tool result against its outputSchema before sending (already required by mcp)
+    "jsonschema==4.26.0",
+    "opentelemetry-api==1.45.0",  # tracing API (already required by mcp); no-op until an SDK/exporter is installed  # server checks every tool result against its outputSchema before sending (already required by mcp)
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest",      # test runner: `pytest tests/ -q` (163 tests)
+    "pytest",      # test runner: `pytest tests/ -q` (308 tests)
+    "opentelemetry-sdk==1.45.0",  # tests record spans with the in-memory exporter
 ]
 
 [project.scripts]
@@ -108,6 +109,30 @@ transport = "streamable-http (stateless default)"
 tools = ["list_voicemails", "check_voicemail", "explain_red_flags", "block_number", "report_scam"]
 fixtures = 8                 # 5 scam + 3 legitimate, in fixtures/voicemails/
 fixture_required_fields = ["voicemail_id", "received_at", "caller_number"]  # caller_name optional; exactly one fixture matches "IRS"
+
+[tool.aegis.ecosystem]
+# Ring -> wearable -> Fire TV pipeline (server/ecosystem/, docs/ecosystem.md). Decided 2026-10-04.
+simulator_only = true                  # Aegis-defined schemas; no real Ring/Bee/Fire TV integration exists yet
+verdicts = "deterministic engine"      # no_llm_verdicts applies here too; Bedrock may only phrase text
+wearable_requires_consent = true       # consent.all_parties_consented must be true or the event is refused
+transcripts_stored = false             # analyzed in memory, never logged, stored or shown on a card
+webhooks_signed = "HMAC-SHA256 v1"     # AEGIS_WEBHOOK_SECRET; 5 min skew; event_id replay rejected
+display_auth = "bearer"                # AEGIS_DISPLAY_TOKEN on /events/firetv
+card_buttons = ["ask_alexa", "dismiss"]  # display-only; never block, report or approve
+e2e_budget_ms = 200
+
+[tool.aegis.observability]
+metrics = "CloudWatch EMF on stdout"   # stdout carries only EMF; human logs go to stderr
+tracing = "OpenTelemetry API"          # no-op until an SDK + exporter is installed
+dimension_allowlist = ["Service", "Tool", "Status", "Stream", "Outcome", "Kind", "From", "To", "Model"]
+log_redaction = true                   # phones, emails, SSNs, Luhn-valid cards, secrets scrubbed from logs
+no_put_metric_data = true              # IAM grants logs:PutLogEvents only (infrastructure/)
+
+[tool.aegis.security]
+input_normalization = "NFKC + strip invisible/bidi/control"   # engine and tool inputs
+instruction_screening = "heuristic"    # refuses AI-directed caller hints; not a guarantee
+caller_id_names_untrusted = true       # instruction-like names replaced by the spoken number
+pii_stripped_from_tool_args = false    # deliberate: callers are named by number
 
 [tool.aegis.honest_limitations]
 actions_are_simulated = true  # receipts labeled simulated:true; no real blocks or reports

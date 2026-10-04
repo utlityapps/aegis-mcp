@@ -11,6 +11,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from aegis.security import UnsafeInputError, clean_text, looks_like_instruction
+from aegis.telemetry import emit
 from server.schemas import APPROVAL_TOKEN_PATTERN, VOICEMAIL_ID_PATTERN
 
 type Decision = Literal["approve", "reject"]
@@ -124,10 +126,16 @@ def parse_check_voicemail(arguments: Mapping[str, Any] | None) -> CheckVoicemail
     args = _object(arguments, frozenset({"voicemail_id", "caller_hint"}))
     if "voicemail_id" in args and "caller_hint" in args:
         raise InputError("caller_hint", "cannot be combined with voicemail_id")
-    return CheckVoicemailArgs(
-        voicemail_id=_voicemail_id(args),
-        caller_hint=_string(args, "caller_hint", min_length=1, max_length=80),
-    )
+    hint = _string(args, "caller_hint", min_length=1, max_length=80)
+    if hint is not None:
+        try:
+            hint = clean_text(hint, max_length=80)
+        except UnsafeInputError as exc:
+            raise InputError("caller_hint", "is empty after removing invisible characters") from exc
+        if looks_like_instruction(hint):
+            emit({"InjectionSuspected": (1, "Count")}, Tool="check_voicemail")
+            raise InputError("caller_hint", "reads like an instruction, not a caller")
+    return CheckVoicemailArgs(voicemail_id=_voicemail_id(args), caller_hint=hint)
 
 
 def parse_explain_red_flags(arguments: Mapping[str, Any] | None) -> ExplainRedFlagsArgs:

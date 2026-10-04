@@ -12,7 +12,9 @@ Aegis is a voice-native voicemail scam-defense companion for seniors on Alexa+: 
 - Run server: `aegis-server` or `python -m server` → `http://127.0.0.1:8000/mcp` (`--host`/`AEGIS_HOST`, `--port`/`AEGIS_PORT`, `--stateless`/`--no-stateless`, stateless by default)
   - Loopback only by default: a non-loopback `--host` is refused unless `--allow-remote-bind` (`AEGIS_ALLOW_REMOTE_BIND=1`). There is no auth, so expose it through a tunnel instead.
   - Tunnel hostnames must be listed in `AEGIS_ALLOWED_HOSTS` (comma-separated) or the Host check returns 421. `AEGIS_APPROVAL_TTL_SECONDS` sets approval expiry (60–3600, default 600).
-  - `server.server.RequestGuard` buffers each POST body (10 s deadline, 64 KiB cap) before the SDK sees it; uvicorn caps concurrency at 128. Don't remove these — they're what stops stalled or flooding clients.
+  - `server.server.RequestGuard` buffers each POST body (5 s deadline, 64 KiB cap) before the SDK sees it; each tool call has a 3 s limit (`TOOL_TIMEOUT_SECONDS`); uvicorn caps concurrency at 128. Don't remove these — they're what stops stalled or flooding clients.
+  - Tools run only through `AegisTools.call`: typed parse → published `inputSchema` check → private handler. Staged actions move only along `aegis.engine.TRANSITIONS` via `transition()`; never assign `state` directly.
+  - Failure paths return an honest spoken retry message. Never fall back to cached or default *verdict* data: a stale answer could call a scam safe. The analysis cache is safe only because the engine is deterministic per transcript.
 
 ## Engine rules (`aegis/engine.py`)
 
@@ -20,6 +22,20 @@ Aegis is a voice-native voicemail scam-defense companion for seniors on Alexa+: 
 - `demo/server.py` is also stdlib-only. Only `server/` may use third-party packages (`mcp`, `uvicorn`, `starlette`, `jsonschema`, all pinned).
 - Verdicts: `risk_score >= 60` → SCAM, `30–59` → SUSPICIOUS, else LEGITIMATE. Heuristics, weights and thresholds may be tuned as long as tests pass; keep `heuristics_count`/thresholds in `pyproject.toml` in sync.
 - Every heuristic must emit a plain, senior-friendly sentence meant to be read aloud by Alexa — not technical jargon.
+
+## Security & observability
+
+- `aegis/security` and `aegis/telemetry` follow the engine rules: stdlib only, no network. OpenTelemetry lives in `server/observability.py`.
+- **stdout carries only EMF metric lines.** Human logs go to stderr through the queue and `RedactingFilter`. Never `print()` in the server, and keep `log_config=None` on `uvicorn.run`.
+- Metric dimensions must come from `ALLOWED_DIMENSIONS`: never ids, phone numbers, tokens or transcripts. Span attributes never carry tool arguments.
+- Don't strip PII from tool arguments (callers are named by number). Instruction screening is a heuristic; the structural defences (deterministic verdicts, human yes) are what matter.
+
+## Ecosystem pipeline (`server/ecosystem/`, `docs/ecosystem.md`)
+
+- Simulator-grade, with Aegis-defined schemas. Don't describe it as an official Ring/Bee/Fire TV integration.
+- Threat levels come from the deterministic engine only; a model may phrase text, never judge.
+- Wearable events must carry `consent.all_parties_consented: true`. Transcripts are never stored, logged or put on a card.
+- Webhooks are HMAC-signed and display streams need the bearer token; both are mounted only when `AEGIS_WEBHOOK_SECRET` and `AEGIS_DISPLAY_TOKEN` are set. Card buttons are display-only (`ask_alexa`, `dismiss`).
 
 ## Permission layer
 

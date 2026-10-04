@@ -162,7 +162,7 @@ These are **not Amazon products**. They're included because any Python developer
 | b | A request whose `id` is null, a float, a bool, an array or an object is treated as a notification: **202 with no body** | The client waits forever | Pre-screen, answer `-32600` |
 | c | `tools/call` with non-object `arguments` gets a JSON-RPC `-32602` | Spec says tool input errors should be `isError` so the model can self-correct | Pre-screen, answer `isError` invalid_input |
 | d | A client disconnecting mid-body logs a **full traceback at ERROR** per request | Easy log flooding on a public endpoint | Buffer the body with a deadline before the SDK sees it |
-| e | No request-body read deadline: a stalled body holds the connection indefinitely (observed past 40 s) | Slowloris exposure | 10 s deadline then 408, plus a uvicorn concurrency cap |
+| e | No request-body read deadline: a stalled body holds the connection indefinitely (observed past 40 s) | Slowloris exposure | 5 s deadline then 408, plus a uvicorn concurrency cap |
 | f | `initialize` also accepts `2024-11-05` | Wider surface than intended | Documented; not overridden |
 | g | uvicorn (h11) closes the socket on client half-close: **the tool runs but the response is discarded** | An approval can execute while its confirmation is lost | Subclassed the protocol to keep the socket writable until the response is sent |
 | h | `strands-agents==1.57.2` requires `mcp<2.2`, so it can't share an environment with an `mcp==2.2.0` server | A Bedrock agent harness needs its own process and venv | Separate `agent/` deployable (see `docs/aws_bedrock_integration.md`) |

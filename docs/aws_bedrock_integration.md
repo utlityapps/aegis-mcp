@@ -11,6 +11,7 @@
 | Strands' MCP client can drive our server | `strands-agents==1.57.2` `MCPClient(url=...)` against a running `aegis-server`. It listed all 5 tools, called `check_voicemail` with `"I.R.S."`, staged a block, and received `isError` for a forged token. Zero server tracebacks. |
 | Strands can't share our server's environment | `strands-agents==1.57.2` requires `mcp<2.2,>=1.23.0`. Our server pins `mcp==2.2.0`. With that pin, pip's resolver falls back to `strands-agents==0.0.1`, a placeholder release. |
 | Strands API names used below | Checked against the installed 1.57.2 package: `MCPClient`, `BedrockModel(model_id=...)` (which uses `converse_stream`), `BeforeToolCallEvent.cancel_tool`, `HookProvider`, `S3SessionManager`. |
+| §3.2 turn timeout | `ask()` was run with a stub agent whose `invoke_async` stalls: it returned `FALLBACK_SAY` after the 5 s deadline. A stub returning Strands-shaped usage produced a valid EMF line with `BedrockInputTokens`/`BedrockOutputTokens`. |
 | §3.3 approval gate | The `ApprovalGate` code below was run against Strands' real `HookRegistry` and `BeforeToolCallEvent`. It cancels only `approve` when the person declines; staging and `reject` pass through. |
 | uvicorn forwarded-header setting | `uvicorn/config.py` reads `FORWARDED_ALLOW_IPS` (default `127.0.0.1,::1`). |
 
@@ -87,8 +88,13 @@ Pin the exact versions that were tested. Re-check the conflict when Strands supp
 ### 3.2 Agent wiring
 
 ```python
+import asyncio
+import logging
 import os
+import time
 
+from aegis.telemetry import emit  # stdlib-only EMF helper; safe to import in the agent's own venv
+from botocore.config import Config
 from strands import Agent
 from strands.models import BedrockModel
 from strands.tools.mcp import MCPClient
@@ -99,12 +105,40 @@ SYSTEM_PROMPT = (
     "Speak the tool's 'say' text plainly. Never read IDs or approval tokens aloud. "
     "To block or report, first call the tool with voicemail_id, read back its 'say', and wait for the person."
 )
+TURN_TIMEOUT_SECONDS = 5.0
+FALLBACK_SAY = "Aegis is having trouble right now. Please try again in a few minutes."
 
-aegis = MCPClient(url=os.environ.get("AEGIS_MCP_URL", "http://127.0.0.1:8000/mcp"))
+aegis = MCPClient(url=os.environ.get("AEGIS_MCP_URL", "http://127.0.0.1:8000/mcp"), startup_timeout=5)
 model = BedrockModel(
     model_id=os.environ["AEGIS_BEDROCK_MODEL_ID"],  # a model enabled in your account and region
     region_name=os.environ.get("AWS_REGION", "us-east-1"),
+    boto_client_config=Config(connect_timeout=3, read_timeout=5, retries={"max_attempts": 2, "mode": "standard"}),
 )
+
+
+async def ask(agent: Agent, utterance: str) -> str:
+    """One conversational turn with a hard deadline. On any failure the person hears an honest retry
+    message: never a cached or default verdict, which could call a scam safe."""
+    started = time.perf_counter()
+    try:
+        async with asyncio.timeout(TURN_TIMEOUT_SECONDS):
+            result = await agent.invoke_async(utterance)
+        usage = result.metrics.accumulated_usage  # Strands: inputTokens / outputTokens per turn
+        emit(
+            {
+                "BedrockInputTokens": (usage["inputTokens"], "Count"),
+                "BedrockOutputTokens": (usage["outputTokens"], "Count"),
+                "BedrockLatency": ((time.perf_counter() - started) * 1000, "Milliseconds"),
+            },
+            Model=model.config["model_id"],
+        )
+        return str(result)
+    except TimeoutError:
+        logging.getLogger("aegis.agent").warning("turn exceeded %ss", TURN_TIMEOUT_SECONDS)
+    except Exception:
+        logging.getLogger("aegis.agent").exception("turn failed")
+    return FALLBACK_SAY
+
 
 with aegis:
     agent = Agent(
@@ -113,8 +147,10 @@ with aegis:
         system_prompt=SYSTEM_PROMPT,
         hooks=[ApprovalGate(confirm=ask_person)],  # §3.3
     )
-    agent("Check the voicemail I just got from the IRS.")
+    print(asyncio.run(ask(agent, "Check the voicemail I just got from the IRS.")))
 ```
+
+**Timeouts, layer by layer:** the MCP client gets 5 s to connect. Bedrock gets 3 s to connect and 5 s per read, with at most 2 attempts. A whole turn gets 5 s. Each tool call gets 3 s on the server (`TOOL_TIMEOUT_SECONDS`). Any of these failing ends in `FALLBACK_SAY`. **Never fall back to cached or default verdict data:** for a scam checker, a stale or default answer can tell someone a scam call is safe. The server's own cache is different: it only reuses analyses that the deterministic engine would return identically.
 
 - **The tool contract is unchanged.** Strands passes the server's `inputSchema` to the model as the tool spec and returns results that include `structuredContent`; both were verified. The server's validation, `isError` handling and output-schema check (`docs/architecture.md` §7–8) apply to Bedrock-driven calls exactly as they do to Alexa+.
 - **Bedrock Guardrails are optional, not a substitute.** `BedrockModel` accepts `guardrail_id`/`guardrail_version`. They can filter the agent's wording, but verdicts and approvals stay with the server.
@@ -219,7 +255,7 @@ Alexa+ requires under 500 ms per round trip. Tool handlers currently take under 
 - **Listener:** HTTPS :443 with an ACM certificate and a TLS 1.2+ security policy. Redirect HTTP :80 to HTTPS.
 - **Target group:** HTTP :8000, target type instance.
 - **Health check:** `GET /mcp`, success code **405**. In stateless mode the server answers `GET /mcp` with 405 by design (§3.2), so the server needs no code change and no health endpoint that leaks information. A dedicated `/healthz` route is a reasonable later addition.
-- **Idle timeout:** keep the default 60 s, above the server's 10 s body-read deadline and 5 s keep-alive.
+- **Idle timeout:** keep the default 60 s, above the server's 5 s body-read deadline and 5 s keep-alive.
 - **AWS WAF:** a rate-based rule per source IP, plus AWS managed core rules. This is the main abuse control, because the server has no authentication (`auth = "none"`, decision Q2).
 - **No stickiness** (§4.1).
 

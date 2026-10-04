@@ -7,6 +7,8 @@ import asyncio
 import ipaddress
 import json
 import logging
+import logging.handlers
+import queue
 import os
 import re
 import sys
@@ -21,6 +23,7 @@ from mcp.server.context import ServerRequestContext
 from mcp.server.lowlevel import Server
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.exceptions import MCPError
+from opentelemetry import trace
 from uvicorn.protocols.http.h11_impl import H11Protocol
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse, Response
@@ -28,8 +31,13 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from aegis.engine import APPROVAL_TTL_RANGE, DEFAULT_APPROVAL_TTL_SECONDS, ActionLedger
 from aegis.voicemails import DEFAULT_FIXTURE_DIR, FixtureError, VoicemailStore
+from aegis.security import redact_pii
+from aegis.telemetry import METRICS_LOGGER
+from server.ecosystem.pipeline import EcosystemPipeline
+from server.observability import finish_tool, observe_transition, stream_outcome, tool_span
+from server.ecosystem.routes import ecosystem_routes
 from server.schemas import TOOL_DEFINITIONS, TOOL_NAMES, VOICEMAIL_ID_PATTERN, ToolName
-from server.tools import UNAVAILABLE_SAY, AegisTools, ToolFailure
+from server.tools import TIMEOUT_SAY, UNAVAILABLE_SAY, AegisTools, ToolFailure
 from server.validation import InputError
 
 SERVER_NAME = "aegis"
@@ -37,7 +45,8 @@ SERVER_TITLE = "Aegis"
 SERVER_VERSION = "0.1.0"
 MCP_PATH = "/mcp"
 MAX_REQUEST_BODY_BYTES = 64 * 1024
-BODY_READ_TIMEOUT_SECONDS = 10.0
+BODY_READ_TIMEOUT_SECONDS = 5.0
+TOOL_TIMEOUT_SECONDS = 3.0  # far above the <1 ms handlers take; a hit means something is wrong
 MAX_CONCURRENCY = 128  # connections + in-flight tasks; beyond this uvicorn answers 503
 KEEP_ALIVE_SECONDS = 5
 SHUTDOWN_GRACE_SECONDS = 5
@@ -83,6 +92,10 @@ def build_server(tools: AegisTools) -> Server[Any]:
         return _TOOLS_LIST
 
     async def call_tool(ctx: ServerRequestContext[Any], params: types.CallToolRequestParams) -> types.CallToolResult:
+        with tool_span(params.name):
+            return await run_tool(ctx, params)
+
+    async def run_tool(ctx: ServerRequestContext[Any], params: types.CallToolRequestParams) -> types.CallToolResult:
         started = time.perf_counter()
         name = params.name
         arguments = params.arguments
@@ -92,7 +105,12 @@ def build_server(tools: AegisTools) -> Server[Any]:
         tool_name: ToolName = TOOL_NAMES[TOOL_NAMES.index(name)]  # narrows str to the ToolName literal
 
         try:
-            outcome = await tools.call(tool_name, arguments)
+            async with asyncio.timeout(TOOL_TIMEOUT_SECONDS):
+                outcome = await tools.call(tool_name, arguments)
+        except TimeoutError:
+            logger.error("tool %s exceeded %ss (request_id=%s)", name, TOOL_TIMEOUT_SECONDS, ctx.request_id)
+            _log_call(ctx, name, _mode_of(name, arguments), "timeout", started, arguments)
+            return _failure_result(ToolFailure("unavailable", TIMEOUT_SAY))
         except ToolFailure as failure:
             _log_call(ctx, name, _mode_of(name, arguments), failure.code, started, arguments)
             return _failure_result(failure)
@@ -136,7 +154,12 @@ def _log_call(
     started: float,
     arguments: dict[str, Any] | None,
 ) -> None:
-    """One structured line per tools/call. Tokens, cursors and transcripts are never logged."""
+    """One structured line per tools/call, plus the span outcome and EMF latency metric.
+
+    Tokens, cursors and transcripts are never logged.
+    """
+    latency_ms = (time.perf_counter() - started) * 1000
+    finish_tool(trace.get_current_span(), tool, status, mode, latency_ms)
     voicemail_id = arguments.get("voicemail_id") if isinstance(arguments, dict) else None
     record = {
         "event": "tools/call",
@@ -145,7 +168,7 @@ def _log_call(
         "mode": mode,
         "status": status,
         "voicemail_id": voicemail_id if isinstance(voicemail_id, str) and _VOICEMAIL_ID_RE.fullmatch(voicemail_id) else None,
-        "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+        "latency_ms": round(latency_ms, 2),
     }
     logger.info(json.dumps(record, default=str))
 
@@ -241,22 +264,27 @@ class RequestGuard:
             async with asyncio.timeout(self.body_timeout):
                 body = await self._read_body(receive)
         except TimeoutError:
+            stream_outcome("mcp_post", "body_timeout")
             logger.warning("dropped POST %s: request body not received within %ss", MCP_PATH, self.body_timeout)
             await Response("Request Timeout", status_code=408, headers={"Connection": "close"})(scope, receive, send)
             return
         except _BodyTooLarge:
+            stream_outcome("mcp_post", "too_large")
             await Response("Request body too large", status_code=413)(scope, receive, send)
             return
         except _ClientGone:
+            stream_outcome("mcp_post", "client_gone")
             logger.info("client disconnected before sending the full request body")
             return
 
         screened = screen_jsonrpc(body)
         if screened is not None:
+            stream_outcome("mcp_post", "screened")
             status, payload = screened
             await JSONResponse(payload, status_code=status)(scope, receive, send)
             return
 
+        stream_outcome("mcp_post", "accepted")
         replayed = False
 
         async def replay() -> Message:
@@ -297,10 +325,19 @@ def build_app(
     allowed_hosts: Sequence[str] = (),
     store: VoicemailStore | None = None,
     ledger: ActionLedger | None = None,
+    webhook_secret: str | None = None,
+    display_token: str | None = None,
+    pipeline: EcosystemPipeline | None = None,
 ) -> Starlette:
+    """Build the ASGI app. The ecosystem endpoints are mounted only when both secrets are given."""
+    extra_routes = (
+        ecosystem_routes(pipeline or EcosystemPipeline(), webhook_secret, display_token)
+        if webhook_secret and display_token
+        else None
+    )
     tools = AegisTools(
         store=store if store is not None else VoicemailStore.from_directory(DEFAULT_FIXTURE_DIR),
-        ledger=ledger if ledger is not None else ActionLedger(),
+        ledger=ledger if ledger is not None else ActionLedger(observer=observe_transition),
     )
     app = build_server(tools).streamable_http_app(
         streamable_http_path=MCP_PATH,
@@ -309,9 +346,56 @@ def build_app(
         max_request_body_size=MAX_REQUEST_BODY_BYTES,
         transport_security=transport_security(allowed_hosts),
         host=host,
+        custom_starlette_routes=extra_routes,
     )
     app.add_middleware(RequestGuard, stateless=stateless)
     return app
+
+
+class RedactingFilter(logging.Filter):
+    """Scrub phone numbers, emails, SSNs, card numbers and secrets from every human-readable log line.
+
+    Runs on the listener thread, so redaction never slows a response.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        if record.exc_info and not record.exc_text:
+            record.exc_text = logging.Formatter().formatException(record.exc_info)
+        record.msg, record.args = redact_pii(message), None
+        if record.exc_text:
+            record.exc_text = redact_pii(record.exc_text)
+        return True
+
+
+def _only_metrics(record: logging.LogRecord) -> bool:
+    return record.name == METRICS_LOGGER
+
+
+def _not_metrics(record: logging.LogRecord) -> bool:
+    return record.name != METRICS_LOGGER
+
+
+def configure_logging(level: int = logging.INFO) -> logging.handlers.QueueListener:
+    """Send every log record through a queue to a background thread, so writing logs never blocks a response.
+
+    The request path only does a non-blocking `queue.put`; formatting and stderr I/O happen on the
+    listener's thread. Call `.stop()` on the returned listener at shutdown to flush what's left.
+    """
+    records: queue.SimpleQueue[logging.LogRecord] = queue.SimpleQueue()
+    stderr = logging.StreamHandler(sys.stderr)
+    stderr.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    stderr.addFilter(_not_metrics)
+    stderr.addFilter(RedactingFilter())
+    metrics = logging.StreamHandler(sys.stdout)  # EMF: one bare JSON document per line
+    metrics.setFormatter(logging.Formatter("%(message)s"))
+    metrics.addFilter(_only_metrics)
+    listener = logging.handlers.QueueListener(records, stderr, metrics, respect_handler_level=True)
+    root = logging.getLogger()
+    root.handlers[:] = [logging.handlers.QueueHandler(records)]
+    root.setLevel(level)
+    listener.start()
+    return listener
 
 
 def _env_int(name: str, default: int) -> int:
@@ -353,7 +437,6 @@ def is_loopback(host: str) -> bool:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     args = _parse_args(argv)
     if not is_loopback(args.host) and not args.allow_remote_bind:
         raise SystemExit(
@@ -375,12 +458,27 @@ def main(argv: Sequence[str] | None = None) -> None:
     except FixtureError as exc:
         raise SystemExit(f"Cannot load voicemail fixtures: {exc}") from exc
 
-    app = build_app(
-        stateless=args.stateless,
-        host=args.host,
-        allowed_hosts=tunnel_hosts,
-        store=store,
-        ledger=ActionLedger(ttl_seconds=ttl),
+    webhook_secret = os.environ.get("AEGIS_WEBHOOK_SECRET")
+    display_token = os.environ.get("AEGIS_DISPLAY_TOKEN")
+    if bool(webhook_secret) != bool(display_token):
+        raise SystemExit("Set both AEGIS_WEBHOOK_SECRET and AEGIS_DISPLAY_TOKEN to enable the ecosystem endpoints.")
+
+    try:
+        app = build_app(
+            stateless=args.stateless,
+            host=args.host,
+            allowed_hosts=tunnel_hosts,
+            store=store,
+            ledger=ActionLedger(ttl_seconds=ttl, observer=observe_transition),
+            webhook_secret=webhook_secret,
+            display_token=display_token,
+        )
+    except ValueError as exc:
+        raise SystemExit(f"Cannot enable the ecosystem endpoints: {exc}") from exc
+    listener = configure_logging()
+    logger.info(
+        "ecosystem endpoints %s",
+        "enabled: /webhooks/ring, /webhooks/bee, /events/firetv" if webhook_secret else "disabled",
     )
     logger.info(
         "Aegis MCP server on http://%s:%s%s (stateless=%s, voicemails=%d, approval_ttl=%ss)",
@@ -391,15 +489,19 @@ def main(argv: Sequence[str] | None = None) -> None:
         len(store),
         ttl,
     )
-    uvicorn.run(
-        app,
-        host=args.host,
-        port=args.port,
-        workers=1,
-        log_level="info",
-        limit_concurrency=MAX_CONCURRENCY,
-        timeout_keep_alive=KEEP_ALIVE_SECONDS,
-        timeout_graceful_shutdown=SHUTDOWN_GRACE_SECONDS,
-        server_header=False,
-        http=HalfCloseTolerantH11Protocol,
-    )
+    try:
+        uvicorn.run(
+            app,
+            host=args.host,
+            port=args.port,
+            workers=1,
+            log_level="info",
+            log_config=None,  # uvicorn's own config prints access logs to stdout, which must carry only EMF
+            limit_concurrency=MAX_CONCURRENCY,
+            timeout_keep_alive=KEEP_ALIVE_SECONDS,
+            timeout_graceful_shutdown=SHUTDOWN_GRACE_SECONDS,
+            server_header=False,
+            http=HalfCloseTolerantH11Protocol,
+        )
+    finally:
+        listener.stop()

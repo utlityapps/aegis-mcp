@@ -8,8 +8,10 @@ and prints one PASS/FAIL line per check. Exits non-zero if any check fails.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+import secrets
 import socket
 import subprocess
 import sys
@@ -23,6 +25,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+WEBHOOK_SECRET = secrets.token_urlsafe(32)
+DISPLAY_TOKEN = secrets.token_urlsafe(32)
 EXPECTED_TOOLS = ["list_voicemails", "check_voicemail", "explain_red_flags", "block_number", "report_scam"]
 
 
@@ -184,6 +188,16 @@ def run_checks(wire: Wire) -> list[tuple[str, str | None]]:
         structured = wire.call("check_voicemail", {"caller_hint": "the I. R. S."})["structuredContent"]
         _expect(structured.get("voicemail", {}).get("voicemail_id") == state["voicemail_id"], f"{structured}")
 
+    def ecosystem_chain() -> None:
+        spec = importlib.util.spec_from_file_location("simulator", ROOT / "scripts" / "simulate_ecosystem_event.py")
+        assert spec is not None and spec.loader is not None
+        simulator = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = simulator  # dataclasses resolve their module through sys.modules
+        spec.loader.exec_module(simulator)
+        base = f"http://127.0.0.1:{wire.port}"
+        chain = simulator.run_chain(base, WEBHOOK_SECRET, DISPLAY_TOKEN, "scam")
+        _expect(chain.ok and [c["severity"] for c in chain.cards] == ["info", "alert"], f"{chain.error} {chain.cards}")
+
     def notification_accepted() -> None:
         status, _ = wire.http(body={"jsonrpc": "2.0", "method": "notifications/initialized"})
         _expect(status == 202, f"notification returned {status}")
@@ -211,6 +225,7 @@ def run_checks(wire: Wire) -> list[tuple[str, str | None]]:
         ("non-object arguments return isError invalid_input", non_object_arguments),
         ("half-closed client still receives its response", half_close_gets_response),
         ("spelled-out 'I. R. S.' finds the IRS voicemail", spelled_acronym),
+        ("Ring -> Bee -> assessment -> Fire TV card over HTTP/SSE", ecosystem_chain),
     ]
     results: list[tuple[str, str | None]] = []
     for label, check in checks:
@@ -236,7 +251,13 @@ def _wait_until_up(wire: Wire, process: subprocess.Popen[bytes], deadline: float
 
 def main() -> int:
     port = _free_port()
-    env = {**os.environ, "AEGIS_HOST": "127.0.0.1", "AEGIS_PORT": str(port)}
+    env = {
+        **os.environ,
+        "AEGIS_HOST": "127.0.0.1",
+        "AEGIS_PORT": str(port),
+        "AEGIS_WEBHOOK_SECRET": WEBHOOK_SECRET,
+        "AEGIS_DISPLAY_TOKEN": DISPLAY_TOKEN,
+    }
     with tempfile.TemporaryFile() as server_log:
         process = subprocess.Popen(
             [sys.executable, "-m", "server"], cwd=ROOT, env=env, stdout=server_log, stderr=subprocess.STDOUT

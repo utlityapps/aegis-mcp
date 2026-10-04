@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import logging
 import re
 import secrets
 from collections.abc import Awaitable, Callable, Mapping
@@ -18,7 +19,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, assert_never
 
+from jsonschema import Draft202012Validator
+
 from aegis.engine import (
+    Analysis,
     ActionKind,
     ActionLedger,
     ApprovalError,
@@ -29,11 +33,16 @@ from aegis.engine import (
     explain_red_flags as select_red_flags,
     propose_actions,
 )
-from aegis.voicemails import Voicemail, VoicemailStore
+from aegis.voicemails import Voicemail, VoicemailStore, collapse_spelled_acronyms, normalize
 from server import speech
-from server.schemas import ToolName
+from server.cache import TTLCache
+from server.schemas import TOOL_DEFINITIONS, ToolName
 from server.validation import (
+    ActionArgs,
+    CheckVoicemailArgs,
+    ExplainRedFlagsArgs,
     InputError,
+    ListVoicemailsArgs,
     ResolveActionArgs,
     StageActionArgs,
     parse_action,
@@ -58,9 +67,24 @@ _INPUT_SAYS: dict[str, str] = {
 PERMISSION_DENIED_SAY = "I can't do that without your OK. Would you like me to set it up again?"
 TOKEN_EXPIRED_SAY = "That request timed out. Would you like me to set it up again?"
 UNAVAILABLE_SAY = "Aegis is having trouble right now. Please try again in a few minutes."
+TIMEOUT_SAY = "That took longer than it should. Please ask me again in a moment."
 NOT_FOUND_ID_SAY = "I couldn't find that voicemail. Would you like to hear your recent voicemails?"
 EMPTY_MAILBOX_SAY = "You don't have any voicemails right now. Ask me again when a new one comes in."
 MAX_CANDIDATES = 5
+ANALYSIS_CACHE_TTL_SECONDS = 600.0
+HINT_CACHE_TTL_SECONDS = 300.0
+HINT_CACHE_MAX_ENTRIES = 256
+
+logger = logging.getLogger("aegis.tools")
+
+_PARSERS: dict[ToolName, Callable[[Mapping[str, Any] | None], Any]] = {
+    "list_voicemails": parse_list_voicemails,
+    "check_voicemail": parse_check_voicemail,
+    "explain_red_flags": parse_explain_red_flags,
+    "block_number": parse_action,
+    "report_scam": parse_action,
+}
+_INPUT_VALIDATORS = {name: Draft202012Validator(spec["inputSchema"]) for name, spec in TOOL_DEFINITIONS.items()}
 _CURSOR_RE = re.compile(r"(?P<offset>[0-9]{1,6})\.(?P<mac>[0-9a-f]{16})", re.ASCII)
 TOP_FLAGS = 3
 
@@ -134,22 +158,89 @@ class AegisTools:
         self._ledger = ledger
         self._cursors = cursors or CursorCodec()
         self._lock = asyncio.Lock()
-        self._handlers: dict[ToolName, Callable[[Mapping[str, Any] | None], Awaitable[ToolResult]]] = {
-            "list_voicemails": self.list_voicemails,
-            "check_voicemail": self.check_voicemail,
-            "explain_red_flags": self.explain_red_flags,
-            "block_number": self.block_number,
-            "report_scam": self.report_scam,
+        self._analyses: TTLCache[str, Analysis] = TTLCache(max(len(store), 1), ANALYSIS_CACHE_TTL_SECONDS)
+        self._hint_matches: TTLCache[str, tuple[str, ...]] = TTLCache(HINT_CACHE_MAX_ENTRIES, HINT_CACHE_TTL_SECONDS)
+        self._background: set[asyncio.Task[None]] = set()
+        # Handlers are private and only ever receive arguments that already passed both validation gates.
+        self._handlers: dict[ToolName, Callable[[Any], Awaitable[ToolResult]]] = {
+            "list_voicemails": self._list_voicemails,
+            "check_voicemail": self._check_voicemail,
+            "explain_red_flags": self._explain_red_flags,
+            "block_number": self._block_number,
+            "report_scam": self._report_scam,
         }
 
     def has_tool(self, name: str) -> bool:
         return name in self._handlers
 
     async def call(self, name: ToolName, arguments: Mapping[str, Any] | None) -> ToolResult:
+        """The single entry point: parse into typed args, re-check the published schema, then run the handler.
+
+        Nothing reaches the ledger unless both gates pass; a failure leaves every state untouched.
+        """
         try:
-            return await self._handlers[name](arguments)
+            parsed = _PARSERS[name](arguments)
         except InputError as exc:
             raise ToolFailure.from_input_error(exc) from exc
+        schema_error = next(iter(_INPUT_VALIDATORS[name].iter_errors(dict(arguments or {}))), None)
+        if schema_error is not None:
+            field = str(schema_error.absolute_path[0]) if schema_error.absolute_path else "arguments"
+            raise ToolFailure.from_input_error(InputError(field, f"violates inputSchema ({schema_error.validator})"))
+        try:
+            return await self._handlers[name](parsed)
+        except InputError as exc:  # semantic checks inside handlers, such as cursor decoding
+            raise ToolFailure.from_input_error(exc) from exc
+
+    @property
+    def cache_stats(self) -> dict[str, int]:
+        return {
+            "analysis_hits": self._analyses.hits,
+            "analysis_misses": self._analyses.misses,
+            "hint_hits": self._hint_matches.hits,
+            "hint_misses": self._hint_matches.misses,
+        }
+
+    def _analyze(self, voicemail: Voicemail) -> Analysis:
+        """Engine verdicts are deterministic per transcript, so a cached analysis is exactly the fresh one."""
+        cached = self._analyses.get(voicemail.voicemail_id)
+        if cached is None:
+            cached = analyze_voicemail(voicemail.transcript)
+            self._analyses.set(voicemail.voicemail_id, cached)
+        return cached
+
+    def _find_by_hint(self, hint: str) -> tuple[Voicemail, ...]:
+        key = collapse_spelled_acronyms(normalize(hint))
+        ids = self._hint_matches.get(key)
+        if ids is None:
+            ids = tuple(v.voicemail_id for v in self._store.find_by_hint(hint))
+            self._hint_matches.set(key, ids)
+        return tuple(v for v in (self._store.get(i) for i in ids) if v is not None)
+
+    def _prefetch(self, voicemails: tuple[Voicemail, ...]) -> None:
+        """Speculatively warm the analysis cache for voicemails the person is likely to ask about next.
+
+        Read-only by construction: it only runs the engine. It never stages, approves or changes state.
+        """
+        pending = tuple(v for v in voicemails if v.voicemail_id not in self._analyses)
+        if not pending:
+            return
+        task = asyncio.get_running_loop().create_task(self._warm(pending))
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
+    async def _warm(self, voicemails: tuple[Voicemail, ...]) -> None:
+        try:
+            for voicemail in voicemails:
+                await asyncio.sleep(0)  # yield between analyses so live requests go first
+                if voicemail.voicemail_id not in self._analyses:
+                    self._analyses.set(voicemail.voicemail_id, analyze_voicemail(voicemail.transcript))
+        except Exception:
+            logger.exception("speculative prefetch failed; requests will analyze on demand")
+
+    async def drain_background(self) -> None:
+        """Wait for speculative work to finish (tests and graceful shutdown)."""
+        while self._background:
+            await asyncio.gather(*tuple(self._background), return_exceptions=True)
 
     def _voicemail(self, voicemail_id: str) -> Voicemail:
         voicemail = self._store.get(voicemail_id)
@@ -159,8 +250,7 @@ class AegisTools:
 
     # ---------------------------------------------------------------- read-only
 
-    async def list_voicemails(self, arguments: Mapping[str, Any] | None) -> ToolResult:
-        args = parse_list_voicemails(arguments)
+    async def _list_voicemails(self, args: ListVoicemailsArgs) -> ToolResult:
         offset = 0 if args.cursor is None else self._cursors.decode(args.cursor)
         everything = self._store.newest_first
         shown = everything[offset : offset + args.limit]
@@ -172,14 +262,14 @@ class AegisTools:
             "next_cursor": self._cursors.encode(next_offset) if has_more else None,
             "say": speech.list_say(shown, len(everything), has_more, first_page=offset == 0),
         }
+        self._prefetch(shown)
         return ToolResult(structured, status="listed")
 
-    async def check_voicemail(self, arguments: Mapping[str, Any] | None) -> ToolResult:
-        args = parse_check_voicemail(arguments)
+    async def _check_voicemail(self, args: CheckVoicemailArgs) -> ToolResult:
         if args.voicemail_id is not None:
             voicemail = self._voicemail(args.voicemail_id)
         elif args.caller_hint is not None:
-            matches = self._store.find_by_hint(args.caller_hint)
+            matches = self._find_by_hint(args.caller_hint)
             if not matches:
                 say = (
                     f"I couldn't find a voicemail from {speech.speakable_hint(args.caller_hint)}. "
@@ -193,6 +283,7 @@ class AegisTools:
                     "candidates": [_summary(v) for v in candidates],
                     "say": speech.ambiguous_say(candidates),
                 }
+                self._prefetch(candidates)
                 return ToolResult(structured, status="ambiguous")
             voicemail = matches[0]
         else:
@@ -200,7 +291,7 @@ class AegisTools:
                 raise ToolFailure("not_found", EMPTY_MAILBOX_SAY)
             voicemail = self._store.newest_first[0]
 
-        analysis = analyze_voicemail(voicemail.transcript)
+        analysis = self._analyze(voicemail)
         suggested = propose_actions(analysis)
         structured = {
             "status": "checked",
@@ -214,10 +305,9 @@ class AegisTools:
         }
         return ToolResult(structured, status="checked")
 
-    async def explain_red_flags(self, arguments: Mapping[str, Any] | None) -> ToolResult:
-        args = parse_explain_red_flags(arguments)
+    async def _explain_red_flags(self, args: ExplainRedFlagsArgs) -> ToolResult:
         voicemail = self._voicemail(args.voicemail_id)
-        analysis = analyze_voicemail(voicemail.transcript)
+        analysis = self._analyze(voicemail)
         window = select_red_flags(analysis, args.start, args.max_flags)
         total = len(analysis.flags)
         next_start = args.start + len(window)
@@ -235,14 +325,13 @@ class AegisTools:
 
     # ------------------------------------------------------ permission-gated pair
 
-    async def block_number(self, arguments: Mapping[str, Any] | None) -> ToolResult:
-        return await self._gated_action("block_number", arguments)
+    async def _block_number(self, args: ActionArgs) -> ToolResult:
+        return await self._gated_action("block_number", args)
 
-    async def report_scam(self, arguments: Mapping[str, Any] | None) -> ToolResult:
-        return await self._gated_action("report_scam", arguments)
+    async def _report_scam(self, args: ActionArgs) -> ToolResult:
+        return await self._gated_action("report_scam", args)
 
-    async def _gated_action(self, kind: ActionKind, arguments: Mapping[str, Any] | None) -> ToolResult:
-        args = parse_action(arguments)
+    async def _gated_action(self, kind: ActionKind, args: ActionArgs) -> ToolResult:
         match args:
             case StageActionArgs():
                 return await self._stage(kind, args)
@@ -253,7 +342,7 @@ class AegisTools:
 
     async def _stage(self, kind: ActionKind, args: StageActionArgs) -> ToolResult:
         voicemail = self._voicemail(args.voicemail_id)
-        verdict = analyze_voicemail(voicemail.transcript).verdict
+        verdict = self._analyze(voicemail).verdict
         async with self._lock:
             outcome = self._ledger.stage_action(kind, voicemail.voicemail_id, voicemail.caller_number)
 

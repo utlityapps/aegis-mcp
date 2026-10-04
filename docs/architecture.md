@@ -100,6 +100,7 @@ The server runs with `--stateless` by default:
 - **`MCP-Protocol-Version` header:** after initialization, clients send this header. If it is present with an unsupported value, the server MUST answer `400 Bad Request`. If it is absent, the server assumes the version negotiated in §4. Stateless mode doesn't track that version per client, so it falls back to the spec's default rule.
 - **Origin validation:** the server MUST validate the `Origin` header when present, to prevent DNS rebinding. It allows no browser origins by default. Requests without `Origin`, which is normal for server-to-server traffic like Alexa+, are allowed.
 - **Body limits:** request bodies over 64 KiB → `413`. Tool arguments are tiny; this bounds abuse through the public tunnel.
+- **Deadlines:** the full request body must arrive within 5 s (otherwise 408), and each tool call must finish within 3 s (otherwise `isError` `unavailable` with a spoken retry message).
 - **Latency budget:** under 500 ms round trip (Alexa+ requirement). Engine analysis is in-process regex work over short text, with a target p95 under 20 ms server-side. The tunnel takes most of the budget.
 
 ### 3.4 Process model
@@ -564,7 +565,7 @@ Rules:
 | `BlockRegistry` | `caller_number` | receipt | Until restart |
 | `ReportRegistry` | `voicemail_id` | receipt | Until restart |
 
-Analysis results are **not** cached as state. The engine is deterministic, so recomputing gives the same answer.
+Analysis results are **not** state: nothing about them changes what a later call may do. The server *memoizes* them in a bounded TTL cache keyed by `voicemail_id`, and caches caller-hint matches by normalized hint (at most 256 entries). That's correct only because the engine is deterministic per transcript, so a cached analysis is identical to a fresh one. Listing voicemails, or an ambiguous match, speculatively warms the analysis cache in a background task. That prefetch is read-only and never stages anything.
 
 ### 9.2 Staged action state machine
 
@@ -594,6 +595,8 @@ Analysis results are **not** cached as state. The engine is deterministic, so re
 | PENDING | approve/reject | `voicemail_id` given and ≠ the action's target | PENDING (unchanged) | `isError`, `permission_denied`, token not consumed |
 | EXECUTED / REJECTED / EXPIRED | approve/reject | any | unchanged | `isError`, `permission_denied` (reused token) |
 | — | approve/reject | unknown token | — | `isError`, `permission_denied` |
+
+Transitions are enforced in code: `aegis.engine.TRANSITIONS` lists the only legal moves (PENDING → PENDING/EXECUTED/REJECTED/EXPIRED; the three terminal states have no exits), and every state change goes through `transition()`, which raises `IllegalTransitionError` (a `PermissionError`, so `permission_denied`) for anything else. Both validation gates in §7.1 run before any transition.
 
 ### 9.3 Approval token rules
 - **Generation:** 32 or more bytes from a CSPRNG (`secrets.token_urlsafe(32)`, stdlib in the server layer), URL-safe base64.
@@ -628,6 +631,7 @@ Each step's output carries the IDs the next step needs (`voicemail_id`, `approva
 - Log one structured line per `tools/call`: timestamp, JSON-RPC `id`, tool name, mode (stage/resolve), result status or error code, and server-side latency in ms.
 - **Never log** approval tokens, cursors in plain text, or full transcripts. Voicemail IDs and action IDs are fine.
 - Logs go to stderr locally. Nothing is sent over the network.
+- Records pass through a `QueueHandler` to a background `QueueListener` thread, so writing a log line never blocks a response.
 
 ---
 

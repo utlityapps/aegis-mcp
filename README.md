@@ -8,6 +8,8 @@
 
 Aegis is a self-hosted [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that Alexa+ calls over Streamable HTTP. A deterministic engine checks each voicemail and returns a verdict (SCAM, SUSPICIOUS or LEGITIMATE) with plain spoken reasons. If the person asks, Aegis can block the caller or report the call, but only after a read-back and an explicit "yes".
 
+Aegis also runs as a **zero-UI ambient security daemon**. A doorbell press and a visitor's sales pitch can put a scam warning on the TV before anyone speaks to Alexa. See [Ambient mode](#ambient-mode-a-zero-ui-security-daemon). It's simulator-grade, with no real device integrations yet.
+
 ---
 
 ## Hackathon track
@@ -17,7 +19,7 @@ Aegis is a self-hosted [Model Context Protocol](https://modelcontextprotocol.io)
 | **Event** | Amazon Developer Hackathon "Build, Ship, Shape" |
 | **Track** | Alexa+ |
 | **Deadline** | 2026-10-23, 12:00 PT |
-| **Demo** | One voice request, no typing: *"Alexa, ask Aegis to check the voicemail I just got from the IRS."* |
+| **Demo** | Opens **zero-prompt**: a doorbell press puts a scam warning on the TV before anyone speaks (simulated devices). Then one voice request, no typing: *"Alexa, ask Aegis to check the voicemail I just got from the IRS."* Script: [`docs/pitch_script.md`](docs/pitch_script.md) |
 | **Product teardown** | [`AMAZON_DEVELOPER_FEEDBACK.md`](AMAZON_DEVELOPER_FEEDBACK.md): executive teardown of building on Alexa+ MCP, Streamable HTTP and Bedrock/Strands, with every finding tagged by its evidence source |
 | **Submission extras** | Detailed feedback brief: [`docs/developer_feedback.md`](docs/developer_feedback.md) |
 
@@ -114,6 +116,57 @@ sequenceDiagram
 The full protocol spec (schemas, error model, state machines) is in [`docs/architecture.md`](docs/architecture.md).
 
 ---
+
+## Ambient mode: a zero-UI security daemon
+
+Most voice assistants are **conversational chat wrappers**: nothing happens until someone asks. Scams don't wait to be asked. A fake "utility worker" is already at the door, talking fast. Aegis's ambient mode flips the model to **proactive ambient intelligence**: it runs in the background, watches for the moment a scam starts, and puts a warning on the TV before anyone has said a word to Alexa.
+
+| | Conversational chat wrapper | Proactive ambient intelligence |
+|---|---|---|
+| Who starts it | The person: *"Alexa, ask Aegis…"* | An event: a doorbell press, a visitor talking |
+| Interface | Voice turn-taking | **Zero UI**: no prompt, no app, no screen tap |
+| When the warning lands | After the person thinks to ask | **While the visitor is still at the door** (about 1 ms per event in simulator runs) |
+| Output | A spoken answer | An ambient Fire TV card (with the voice flow still available) |
+| Who decides the threat | The deterministic engine | **The same deterministic engine.** No model in the loop. |
+| Status | Built and tested (Alexa+ MCP) | **Built and tested in simulation**; not yet wired to real Ring, Bee or Fire TV devices |
+
+### The background loop
+
+```mermaid
+flowchart LR
+    ring["🔔 Ring doorbell / motion<br/>signed webhook · no UI"] --> open["Visit opens<br/>state: OPEN"]
+    open --> tv1["📺 Fire TV ambient card · info<br/>'Someone is at the front door'"]
+    bee["🎙️ Bee wearable<br/>consented visitor transcript<br/>(text only, never stored)"] --> engine
+    open --> engine["Deterministic engine<br/>12 fixed rules · no model in the loop"]
+    engine --> assessed["Visit assessed<br/>state: ASSESSED"]
+    assessed --> tv2["📺 Fire TV ambient card · alert<br/>warning signs · Ask Alexa / Dismiss"]
+    assessed -.-> cue["⌚ Bee wearable cue<br/>not built: no public API"]
+    bedrock["Amazon Bedrock"] -. "optional wording only · not wired" .-> tv2
+```
+
+**How to read it:**
+- **The model never judges.** Threat levels come from the same fixed rules as voicemails. Bedrock could only ever rephrase card text, and it isn't connected. That was a deliberate decision (`no_llm_verdicts` in `pyproject.toml`).
+- **The doorbell alone gives an *info* card.** The *alert* needs the visitor's words, and those come from a wearable transcript only when everyone present has consented. The transcript is scored in memory and dropped.
+- **Cards are display-only.** No button blocks, reports or approves anything; actions still need the spoken read-back and a "yes".
+- **Simulator-grade.** Ring, Bee and Fire TV publish no third-party APIs for this, so the event schemas are Aegis's own. A Fire TV app to render the cards, and any wearable cue, aren't built.
+
+**Run the loop:**
+
+```bash
+export AEGIS_WEBHOOK_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export AEGIS_DISPLAY_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+aegis-server &                                           # mounts /webhooks/ring, /webhooks/bee, /events/firetv
+python scripts/simulate_ecosystem_event.py --scenario scam
+```
+
+```
+OK  Ring doorbell press                          HTTP 202     1.4 ms
+OK  Bee context -> assessment -> Fire TV card    HTTP 202     1.1 ms
+    Fire TV card [info   ] Someone is at the front door
+    Fire TV card [alert  ] Warning: this visitor sounds like a scam  (SCAM, risk 65)
+```
+
+Details, schemas and the privacy and signing decisions: [`docs/ecosystem.md`](docs/ecosystem.md).
 
 ## Quickstart
 
@@ -225,10 +278,6 @@ Alexa+ reads the tool list only when you deploy. Run `alexa-ai deploy` again whe
 
 ---
 
-## Ring → wearable → Fire TV (simulator)
-
-With `AEGIS_WEBHOOK_SECRET` and `AEGIS_DISPLAY_TOKEN` set, the server also accepts signed doorbell and consented wearable-transcript events, scores the visitor's words with the same deterministic engine, and pushes display-only alert cards to Fire TV over Server-Sent Events. The schemas are Aegis-defined, and nothing is connected to real Ring, Bee or Fire TV devices. Details: [`docs/ecosystem.md`](docs/ecosystem.md). Try it with `python scripts/simulate_ecosystem_event.py --scenario scam`.
-
 ## Repository layout
 
 ```
@@ -255,6 +304,8 @@ docs/
   architecture.md               protocol spec: tools, schemas, errors, state machines
   aws_bedrock_integration.md    Strands + Bedrock, DynamoDB state, EC2 behind an ALB (design)
   developer_feedback.md         detailed Amazon Developer feedback brief (doc quotes, per-item evidence)
+  ecosystem.md                  ambient pipeline: Ring -> wearable -> Fire TV (schemas, privacy, signing)
+  pitch_script.md               1:45 submission video script, opening with the zero-prompt alert
 pyproject.toml          dependencies and the [tool.aegis] product agreements
 AMAZON_DEVELOPER_FEEDBACK.md  executive product teardown for the Alexa+ and Bedrock teams
 ```

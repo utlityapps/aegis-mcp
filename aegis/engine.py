@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import re
 import secrets
 from collections.abc import Callable
@@ -16,6 +17,8 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Literal
+
+from aegis.security.sanitize import normalize_text
 
 type Verdict = Literal["SCAM", "SUSPICIOUS", "LEGITIMATE"]
 type ActionKind = Literal["block_number", "report_scam"]
@@ -198,10 +201,13 @@ def verdict_for(raw_score: int) -> Verdict:
 
 
 def analyze_voicemail(transcript: str) -> Analysis:
-    """Run all heuristics over a transcript. Flags are ordered by weight, then id."""
-    fired = [
-        RedFlag(h.flag_id, h.weight, h.say) for h in HEURISTICS if h.matches(transcript)
-    ]
+    """Run all heuristics over a transcript. Flags are ordered by weight, then id.
+
+    The text is NFKC-normalized and stripped of invisible characters first, so look-alike or
+    zero-width obfuscation ("ｇｉｆｔ ｃａｒｄ", "gift\u200bcard") can't dodge the fixed patterns.
+    """
+    text = normalize_text(transcript)
+    fired = [RedFlag(h.flag_id, h.weight, h.say) for h in HEURISTICS if h.matches(text)]
     fired.sort(key=lambda flag: (-flag.weight, flag.flag_id))
     raw_score = sum(flag.weight for flag in fired)
     return Analysis(
@@ -242,11 +248,27 @@ class ApprovalExpiredError(ApprovalError):
     """A token was valid but its staged action passed its expiry time."""
 
 
+class IllegalTransitionError(ApprovalError):
+    """A staged action was asked to move to a state the state machine does not allow."""
+
+
 class ActionState(StrEnum):
     PENDING = "PENDING"
     EXECUTED = "EXECUTED"
     REJECTED = "REJECTED"
     EXPIRED = "EXPIRED"
+
+
+# The only legal moves for a staged action (docs/architecture.md §9.2). PENDING -> PENDING is a
+# re-stage that rotates the token; the three other states are terminal.
+TRANSITIONS: dict[ActionState, frozenset[ActionState]] = {
+    ActionState.PENDING: frozenset(
+        {ActionState.PENDING, ActionState.EXECUTED, ActionState.REJECTED, ActionState.EXPIRED}
+    ),
+    ActionState.EXECUTED: frozenset(),
+    ActionState.REJECTED: frozenset(),
+    ActionState.EXPIRED: frozenset(),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,6 +280,23 @@ class PendingAction:
     created_at: datetime
     expires_at: datetime
     state: ActionState
+
+
+def transition(action: PendingAction, target: ActionState, *, expires_at: datetime | None = None) -> PendingAction:
+    """Return `action` moved to `target`, or raise IllegalTransitionError. The input is never mutated."""
+    if target not in TRANSITIONS[action.state]:
+        raise IllegalTransitionError(f"{action.action_id}: {action.state} -> {target} is not allowed")
+    return replace(action, state=target, expires_at=expires_at or action.expires_at)
+
+
+@dataclass(frozen=True, slots=True)
+class TransitionEvent:
+    """What an observer learns about a state change. No tokens, ids of people, or caller numbers."""
+
+    kind: ActionKind
+    source: str  # an ActionState value, or "NONE" for a brand-new action
+    target: str
+    age_seconds: float  # time since the action was first staged
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,15 +346,26 @@ class ActionLedger:
         self,
         ttl_seconds: int = DEFAULT_APPROVAL_TTL_SECONDS,
         clock: Callable[[], datetime] = _utcnow,
+        observer: Callable[[TransitionEvent], None] | None = None,
     ) -> None:
         low, high = APPROVAL_TTL_RANGE
         if not low <= ttl_seconds <= high:
             raise ValueError(f"ttl_seconds must be between {low} and {high}, got {ttl_seconds}")
         self._ttl = timedelta(seconds=ttl_seconds)
         self._clock = clock
+        self._observer = observer
         self._entries: dict[str, _Entry] = {}
         self._blocked: dict[str, Receipt] = {}
         self._reported: dict[str, Receipt] = {}
+
+    def _notify(self, action: PendingAction, source: str, target: ActionState) -> None:
+        if self._observer is None:
+            return
+        age = (self._clock() - action.created_at).total_seconds()
+        try:
+            self._observer(TransitionEvent(action.kind, source, target.value, age))
+        except Exception:  # telemetry must never change what the ledger does
+            logging.getLogger("aegis.engine").exception("transition observer failed")
 
     def completed(self, kind: ActionKind, voicemail_id: str, caller_number: str) -> Receipt | None:
         """The receipt of an earlier executed action on the same target, if any."""
@@ -331,9 +381,10 @@ class ActionLedger:
         token = secrets.token_urlsafe(32)
         existing = self._find_pending(kind, voicemail_id, now)
         if existing is not None:
-            action = replace(existing.action, expires_at=now + self._ttl)
+            action = transition(existing.action, ActionState.PENDING, expires_at=now + self._ttl)
             existing.action = action
             existing.token_digest = _digest(token)
+            self._notify(action, ActionState.PENDING.value, ActionState.PENDING)
             return StageOutcome(action=action, approval_token=token, already_done=None)
 
         action = PendingAction(
@@ -346,11 +397,12 @@ class ActionLedger:
             state=ActionState.PENDING,
         )
         self._entries[action.action_id] = _Entry(action=action, token_digest=_digest(token))
+        self._notify(action, "NONE", ActionState.PENDING)
         return StageOutcome(action=action, approval_token=token, already_done=None)
 
     def approve_action(self, token: str, kind: ActionKind, voicemail_id: str | None = None) -> Receipt:
         entry = self._claim(token, kind, voicemail_id)
-        action = entry.action
+        action = transition(entry.action, ActionState.EXECUTED)  # checked before any side effect
         receipt = Receipt(
             receipt_id=f"rcpt-{secrets.token_hex(8)}",
             kind=action.kind,
@@ -363,12 +415,15 @@ class ActionLedger:
         else:
             self._reported[action.voicemail_id] = receipt
         del self._entries[action.action_id]
+        self._notify(action, ActionState.PENDING.value, ActionState.EXECUTED)
         return receipt
 
     def reject_action(self, token: str, kind: ActionKind, voicemail_id: str | None = None) -> PendingAction:
         entry = self._claim(token, kind, voicemail_id)
+        rejected = transition(entry.action, ActionState.REJECTED)
         del self._entries[entry.action.action_id]
-        return replace(entry.action, state=ActionState.REJECTED)
+        self._notify(rejected, ActionState.PENDING.value, ActionState.REJECTED)
+        return rejected
 
     def _find_pending(self, kind: ActionKind, voicemail_id: str, now: datetime) -> _Entry | None:
         for action_id, entry in list(self._entries.items()):
@@ -398,6 +453,11 @@ class ActionLedger:
         if voicemail_id is not None and voicemail_id != match.action.voicemail_id:
             raise ApprovalError("token belongs to a different voicemail")
         if self._clock() > match.action.expires_at:
+            transition(match.action, ActionState.EXPIRED)
             del self._entries[match.action.action_id]
+            self._notify(match.action, ActionState.PENDING.value, ActionState.EXPIRED)
             raise ApprovalExpiredError("approval token expired")
+        if match.action.state is not ActionState.PENDING:
+            # Only PENDING actions are ever stored; anything else is a broken invariant, so fail closed.
+            raise IllegalTransitionError(f"{match.action.action_id} is {match.action.state}, not PENDING")
         return match
