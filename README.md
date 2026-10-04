@@ -18,7 +18,8 @@ Aegis is a self-hosted [Model Context Protocol](https://modelcontextprotocol.io)
 | **Track** | Alexa+ |
 | **Deadline** | 2026-10-23, 12:00 PT |
 | **Demo** | One voice request, no typing: *"Alexa, ask Aegis to check the voicemail I just got from the IRS."* |
-| **Submission extras** | Product feedback brief: [`docs/developer_feedback.md`](docs/developer_feedback.md) |
+| **Product teardown** | [`AMAZON_DEVELOPER_FEEDBACK.md`](AMAZON_DEVELOPER_FEEDBACK.md): executive teardown of building on Alexa+ MCP, Streamable HTTP and Bedrock/Strands, with every finding tagged by its evidence source |
+| **Submission extras** | Detailed feedback brief: [`docs/developer_feedback.md`](docs/developer_feedback.md) |
 
 ### Design principles
 - **No AI verdicts.** Verdicts come only from 12 fixed, weighted heuristics in `aegis/engine.py`. The engine is standard-library only, with no network and no LLM, and tests enforce that. Alexa+ handles the conversation; Aegis decides the risk.
@@ -135,8 +136,8 @@ This installs the pinned runtime dependencies (`mcp==2.2.0`, `uvicorn==0.54.0`, 
 ### 2. Run the tests
 
 ```bash
-pytest tests/ -q                 # 163 tests: engine, handlers, hardening, stress regressions
-python server/smoke_test.py      # 22 end-to-end checks over real HTTP (starts its own server)
+pytest tests/ -q                 # 308 tests: engine, handlers, hardening, stress, resilience, ecosystem, telemetry/security
+python server/smoke_test.py      # 23 end-to-end checks over real HTTP (starts its own server)
 ```
 
 | Suite | Covers |
@@ -144,6 +145,9 @@ python server/smoke_test.py      # 22 end-to-end checks over real HTTP (starts i
 | `tests/test_aegis.py` | Heuristics, verdict thresholds, fixture verdicts, the permission ledger, the no-network guarantee |
 | `tests/test_tools.py` | All 5 tools against their `outputSchema`, input rules, the approve/reject/expiry/rotation flows |
 | `tests/test_hardening.py` | Request guard (stalled or oversized bodies, disconnects), cursor and token edge cases, bind policy |
+| `tests/test_resilience.py` | State-machine transitions, the double validation gate, forced timeouts, malformed streams, cache hits, prefetch, queued logging |
+| `tests/test_ecosystem.py` | Ring/wearable/card schemas, HMAC signing and replay, the visit state machine, consent and no-transcript rules, SSE delivery, the end-to-end chain under 200 ms |
+| `tests/test_telemetry_security.py` | EMF format and dimension allowlist, metrics per tool/stream/transition, OpenTelemetry spans, log redaction and stdout/stderr routing, sanitizer and injection screening |
 | `tests/test_stress.py` | Invalid JSON-RPC ids, non-object arguments, half-closed connections, spelled-out acronyms, schema-limit data |
 | `server/smoke_test.py` | Handshake at `2025-03-26` and `2025-11-25`, the demo flow, error contracts, 405/413/403/400/202 transport behavior |
 
@@ -221,10 +225,16 @@ Alexa+ reads the tool list only when you deploy. Run `alexa-ai deploy` again whe
 
 ---
 
+## Ring → wearable → Fire TV (simulator)
+
+With `AEGIS_WEBHOOK_SECRET` and `AEGIS_DISPLAY_TOKEN` set, the server also accepts signed doorbell and consented wearable-transcript events, scores the visitor's words with the same deterministic engine, and pushes display-only alert cards to Fire TV over Server-Sent Events. The schemas are Aegis-defined, and nothing is connected to real Ring, Bee or Fire TV devices. Details: [`docs/ecosystem.md`](docs/ecosystem.md). Try it with `python scripts/simulate_ecosystem_event.py --scenario scam`.
+
 ## Repository layout
 
 ```
 aegis/                  engine (stdlib only)
+  security/             text normalization, instruction screening, PII redaction for logs
+  telemetry/            CloudWatch EMF metric lines
   engine.py             12 heuristics, verdicts, ActionLedger (staged actions, single-use tokens)
   voicemails.py         fixture loading, deterministic caller lookup (synonyms, spelled-out acronyms)
 server/                 MCP server (the only place third-party packages are allowed)
@@ -234,16 +244,81 @@ server/                 MCP server (the only place third-party packages are allo
   validation.py         typed argument parsing
   speech.py             senior-friendly say text
   smoke_test.py         end-to-end HTTP checks
+  observability.py      OpenTelemetry spans + EMF metric names
+  ecosystem/            Ring/wearable webhooks, visit state machine, Fire TV SSE cards
+infrastructure/         least-privilege IAM policies (Bedrock, CloudWatch Logs)
+scripts/
+  simulate_ecosystem_event.py   fires Ring -> wearable -> Fire TV over real HTTP
 fixtures/voicemails/    8 scripted voicemails (5 scam, 3 legitimate)
 tests/                  pytest suites
 docs/
   architecture.md               protocol spec: tools, schemas, errors, state machines
   aws_bedrock_integration.md    Strands + Bedrock, DynamoDB state, EC2 behind an ALB (design)
-  developer_feedback.md         Amazon Developer product feedback brief
+  developer_feedback.md         detailed Amazon Developer feedback brief (doc quotes, per-item evidence)
 pyproject.toml          dependencies and the [tool.aegis] product agreements
+AMAZON_DEVELOPER_FEEDBACK.md  executive product teardown for the Alexa+ and Bedrock teams
 ```
 
 ---
+
+## Zero-Trust Security & Enterprise Observability
+
+Every request crosses the same boundaries in the same order. Telemetry is emitted at each stage, and never blocks the response or carries personal data.
+
+```mermaid
+flowchart TB
+    client["Alexa+ / Strands agent<br/>Ring & wearable bridges"]
+
+    subgraph boundary["Zero-trust boundary"]
+        direction TB
+        guard["RequestGuard<br/>64 KiB cap · 5 s body deadline<br/>JSON-RPC pre-screen"]
+        sig["Webhooks only:<br/>HMAC-SHA256 + replay check"]
+        schema["Strict schemas<br/>typed parse → published inputSchema<br/>unknown parameters refused"]
+        clean["Sanitizer (aegis/security)<br/>NFKC · strip invisible/bidi/control<br/>length bounds · instruction screen"]
+    end
+
+    subgraph core["Deterministic core"]
+        direction TB
+        engine["Engine: 12 fixed heuristics<br/>(no model ever judges)"]
+        fsm["State machine<br/>TRANSITIONS · single-use tokens"]
+        out["Output contract<br/>outputSchema check · safe caller labels"]
+    end
+
+    subgraph telemetry["Observability (off the request path)"]
+        direction TB
+        otel["OpenTelemetry spans<br/>aegis.tool · aegis.fsm.transition"]
+        emf["EMF metrics → stdout<br/>ToolLatency · StreamEvents<br/>StateTransitions · InjectionSuspected<br/>BedrockInput/OutputTokens"]
+        logs["Logs → stderr via queue thread<br/>PII + secret redaction"]
+    end
+
+    cw[("CloudWatch Logs<br/>/aegis/metrics · /aegis/server")]
+    xray[("OTLP / X-Ray<br/>(when an exporter is configured)")]
+
+    client --> guard --> schema --> clean --> engine --> out --> client
+    client -.-> sig --> schema
+    engine --> fsm --> out
+    guard -.-> emf
+    out -.-> otel
+    fsm -.-> otel
+    clean -.-> emf
+    emf --> cw
+    logs --> cw
+    otel --> xray
+```
+
+**Security**
+- **Strict input:** arguments are parsed into typed values, re-checked against the published `inputSchema`, and refused if they contain anything unexpected. Nothing reaches the ledger until both checks pass.
+- **Text normalization:** NFKC folds look-alike characters, and invisible, bidi and control characters are stripped. "ｇｉｆｔ ｃａｒｄｓ" and "gift\u200bcards" can't slip past the heuristics.
+- **Instruction screening:** caller hints that read like instructions to an AI are refused. A caller ID name, which a scammer controls, is replaced with the spoken number before any model sees it.
+- **What screening can't do:** pattern lists can't catch every prompt injection. The real defence is structural: verdicts come from fixed rules, and every action needs a human "yes".
+- **PII redaction where it's safe:** phone numbers, emails, SSNs, Luhn-valid card numbers, GitHub tokens, AWS keys and bearer tokens are scrubbed from **logs**. They're deliberately *not* stripped from tool arguments, because "555-0147" is how a person names a caller.
+
+**Observability**
+- **EMF metrics** (`aegis/telemetry`) go out as one JSON line each on stdout. CloudWatch extracts them without `PutMetricData`. Dimensions come from an allowlist (`Tool`, `Status`, `Stream`, `Outcome`, `Kind`, `From`, `To`, `Model`, `Service`), so ids, numbers and tokens can't become dimensions.
+- **OpenTelemetry spans** use the API that `mcp` already depends on. They cost nothing until you install `opentelemetry-sdk` and an exporter.
+- **Logs** go through a queue to a background thread: human-readable and redacted on stderr, EMF-only on stdout.
+- **Bedrock tokens:** `server.observability.record_bedrock_usage()` is the hook for the Strands agent (see `docs/aws_bedrock_integration.md`).
+- **Getting it to AWS:** least-privilege IAM policies and shipping notes are in [`infrastructure/`](infrastructure/README.md). On AWS Lambda, CloudWatch reads EMF from stdout natively. On EC2, a log shipper has to send it flagged as EMF.
 
 ## Security notes
 
@@ -251,7 +326,7 @@ pyproject.toml          dependencies and the [tool.aegis] product agreements
 - **Built-in protections:**
   - loopback-only bind by default;
   - Host and Origin checks;
-  - a 64 KiB body cap and a 10 s body-read deadline;
+  - a 64 KiB body cap, a 5 s body-read deadline and a 3 s limit per tool call;
   - a cap of 128 concurrent connections;
   - single-use, hashed approval tokens with an expiry;
   - no tokens, cursors or transcripts in the logs.
