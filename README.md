@@ -1,6 +1,8 @@
-# Aegis
+# Aegis: Voice-First Scam Defense on Alexa+
 
-**A voice-native voicemail scam-defense companion for older adults, on Alexa+.**
+**A shield for older adults and the families who worry about them, built as a self-hosted Alexa+ MCP server.**
+
+**The name:** in Greek myth, the *aegis* was the shield carried by Zeus and Athena, a symbol of protection that's always there. That's the job: Aegis stands between a trusting person and a scammer. It explains the danger in plain words and never acts without a clear "yes".
 
 > "Alexa, ask Aegis to check the voicemail I just got from the IRS."
 >
@@ -8,7 +10,6 @@
 
 Aegis is a self-hosted [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that Alexa+ calls over Streamable HTTP. A deterministic engine checks each voicemail and returns a verdict (SCAM, SUSPICIOUS or LEGITIMATE) with plain spoken reasons. If the person asks, Aegis can block the caller or report the call, but only after a read-back and an explicit "yes".
 
-Aegis also runs as a **zero-UI ambient security daemon**. A doorbell press and a visitor's sales pitch can put a scam warning on the TV before anyone speaks to Alexa. See [Ambient mode](#ambient-mode-a-zero-ui-security-daemon). It's simulator-grade, with no real device integrations yet.
 
 ---
 
@@ -17,11 +18,24 @@ Aegis also runs as a **zero-UI ambient security daemon**. A doorbell press and a
 | | |
 |---|---|
 | **Event** | Amazon Developer Hackathon "Build, Ship, Shape" |
-| **Track** | Alexa+ |
+| **Track** | Alexa+ (self-hosted MCP server, Streamable HTTP, MCP 2025-11-25) |
+| **Mini challenges** | None entered |
 | **Deadline** | 2026-10-23, 12:00 PT |
-| **Demo** | Opens **zero-prompt**: a doorbell press puts a scam warning on the TV before anyone speaks (simulated devices). Then one voice request, no typing: *"Alexa, ask Aegis to check the voicemail I just got from the IRS."* Script: [`docs/pitch_script.md`](docs/pitch_script.md) |
-| **Product teardown** | [`AMAZON_DEVELOPER_FEEDBACK.md`](AMAZON_DEVELOPER_FEEDBACK.md): executive teardown of building on Alexa+ MCP, Streamable HTTP and Bedrock/Strands, with every finding tagged by its evidence source |
-| **Submission extras** | Detailed feedback brief: [`docs/developer_feedback.md`](docs/developer_feedback.md) |
+| **Pitch video** | 2:45 pitch: [`docs/PITCH_SCRIPT.md`](docs/PITCH_SCRIPT.md). Recording steps: [`docs/RECORDING_GUIDE.md`](docs/RECORDING_GUIDE.md) |
+| **Demo** | One sentence to Alexa+, no typing: *"Alexa, ask Aegis to check the voicemail I just got from the IRS."* Then why it's a scam, a read-back, and a "yes"-gated block. |
+| **Run it on Alexa+** | Deploy and test in the Alexa web simulator: [`docs/ALEXA_DEPLOY.md`](docs/ALEXA_DEPLOY.md) |
+| **Product feedback** | [`AMAZON_DEVELOPER_FEEDBACK.md`](AMAZON_DEVELOPER_FEEDBACK.md): the 5-question framework for every tool used (Alexa+ MCP Toolkit, MCP Python SDK, Builder Tools MCP). Evidence: [`docs/developer_feedback.md`](docs/developer_feedback.md) |
+| **Devpost text** | [`docs/DEVPOST_DESCRIPTION.md`](docs/DEVPOST_DESCRIPTION.md) |
+
+## Built With
+
+| | Tool | What Aegis uses it for | Status |
+|---|---|---|---|
+| ⭐ **Track tool** | **Alexa+ MCP server over Streamable HTTP** (Alexa+ MCP Toolkit) | Five voice tools: check, explain, list, block and report voicemails. Stateless JSON-RPC over Streamable HTTP, MCP 2025-11-25 (2025-03-26 also accepted), with a propose → approve → execute gate. | Built and tested (324 tests, 23 HTTP smoke checks). Add-on manifest, icons, and privacy and terms pages ready for `alexa-ai deploy`. |
+| | Alexa AI CLI and web simulator | Deploying to the development stage and testing end to end | See [`docs/ALEXA_DEPLOY.md`](docs/ALEXA_DEPLOY.md) |
+| | MCP Python SDK `2.2.0` | The protocol implementation under the server | In use, hardened (see [Security notes](#security-notes)) |
+| Dev tools | Amazon Devices Builder Tools MCP | Reading Amazon's docs from inside our coding agent | Used throughout the build |
+| Runtime | Python 3.12, uvicorn, Starlette, jsonschema, OpenTelemetry API | Server, validation, tracing | Pinned in `pyproject.toml` |
 
 ### Design principles
 - **No AI verdicts.** Verdicts come only from 12 fixed, weighted heuristics in `aegis/engine.py`. The engine is standard-library only, with no network and no LLM, and tests enforce that. Alexa+ handles the conversation; Aegis decides the risk.
@@ -65,18 +79,11 @@ flowchart LR
 
     tunnel --> guard
 
-    subgraph aws["Optional second client — designed, not deployed"]
-        agent["Strands agent<br/>separate venv (mcp&lt;2.2)<br/>ApprovalGate hook"]
-        bedrock["Amazon Bedrock<br/>(conversation only)"]
-        agent -- "ConverseStream" --> bedrock
-    end
-
-    agent -- "MCPClient · Streamable HTTP<br/>loopback" --> guard
 ```
 
 **How to read it:**
-- **Alexa+ is the production client.** It reaches the server through a Cloudflare tunnel during development, or an Application Load Balancer on AWS.
-- **Bedrock and Strands sit beside Alexa+, not between the server and the engine.** A Strands agent is a second MCP client that uses Bedrock for conversation and calls the same five tools. Verdicts still come only from the engine, so the model never decides risk. The Strands MCP client has been tested against this server; Bedrock calls and the AWS deployment are designed but not built. See [`docs/aws_bedrock_integration.md`](docs/aws_bedrock_integration.md).
+- **Alexa+ is the client.** It handles speech and conversation, and reaches the server over HTTPS through a Cloudflare tunnel.
+- **Aegis decides the risk.** Every verdict comes from the deterministic engine; no language model judges a voicemail.
 
 ### The demo, step by step
 
@@ -117,56 +124,9 @@ The full protocol spec (schemas, error model, state machines) is in [`docs/archi
 
 ---
 
-## Ambient mode: a zero-UI security daemon
+## Experimental extras (not part of the Alexa+ submission)
 
-Most voice assistants are **conversational chat wrappers**: nothing happens until someone asks. Scams don't wait to be asked. A fake "utility worker" is already at the door, talking fast. Aegis's ambient mode flips the model to **proactive ambient intelligence**: it runs in the background, watches for the moment a scam starts, and puts a warning on the TV before anyone has said a word to Alexa.
-
-| | Conversational chat wrapper | Proactive ambient intelligence |
-|---|---|---|
-| Who starts it | The person: *"Alexa, ask Aegis…"* | An event: a doorbell press, a visitor talking |
-| Interface | Voice turn-taking | **Zero UI**: no prompt, no app, no screen tap |
-| When the warning lands | After the person thinks to ask | **While the visitor is still at the door** (about 1 ms per event in simulator runs) |
-| Output | A spoken answer | An ambient Fire TV card (with the voice flow still available) |
-| Who decides the threat | The deterministic engine | **The same deterministic engine.** No model in the loop. |
-| Status | Built and tested (Alexa+ MCP) | **Built and tested in simulation**; not yet wired to real Ring, Bee or Fire TV devices |
-
-### The background loop
-
-```mermaid
-flowchart LR
-    ring["🔔 Ring doorbell / motion<br/>signed webhook · no UI"] --> open["Visit opens<br/>state: OPEN"]
-    open --> tv1["📺 Fire TV ambient card · info<br/>'Someone is at the front door'"]
-    bee["🎙️ Bee wearable<br/>consented visitor transcript<br/>(text only, never stored)"] --> engine
-    open --> engine["Deterministic engine<br/>12 fixed rules · no model in the loop"]
-    engine --> assessed["Visit assessed<br/>state: ASSESSED"]
-    assessed --> tv2["📺 Fire TV ambient card · alert<br/>warning signs · Ask Alexa / Dismiss"]
-    assessed -.-> cue["⌚ Bee wearable cue<br/>not built: no public API"]
-    bedrock["Amazon Bedrock"] -. "optional wording only · not wired" .-> tv2
-```
-
-**How to read it:**
-- **The model never judges.** Threat levels come from the same fixed rules as voicemails. Bedrock could only ever rephrase card text, and it isn't connected. That was a deliberate decision (`no_llm_verdicts` in `pyproject.toml`).
-- **The doorbell alone gives an *info* card.** The *alert* needs the visitor's words, and those come from a wearable transcript only when everyone present has consented. The transcript is scored in memory and dropped.
-- **Cards are display-only.** No button blocks, reports or approves anything; actions still need the spoken read-back and a "yes".
-- **Simulator-grade.** Ring, Bee and Fire TV publish no third-party APIs for this, so the event schemas are Aegis's own. A Fire TV app to render the cards, and any wearable cue, aren't built.
-
-**Run the loop:**
-
-```bash
-export AEGIS_WEBHOOK_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-export AEGIS_DISPLAY_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-aegis-server &                                           # mounts /webhooks/ring, /webhooks/bee, /events/firetv
-python scripts/simulate_ecosystem_event.py --scenario scam
-```
-
-```
-OK  Ring doorbell press                          HTTP 202     1.4 ms
-OK  Bee context -> assessment -> Fire TV card    HTTP 202     1.1 ms
-    Fire TV card [info   ] Someone is at the front door
-    Fire TV card [alert  ] Warning: this visitor sounds like a scam  (SCAM, risk 65)
-```
-
-Details, schemas and the privacy and signing decisions: [`docs/ecosystem.md`](docs/ecosystem.md).
+The repo also contains a **simulator-only** ambient pipeline: a doorbell event plus consented visitor speech produces a TV alert card, scored by the same deterministic engine. It's **off by default** (its endpoints exist only when `AEGIS_WEBHOOK_SECRET` and `AEGIS_DISPLAY_TOKEN` are set), it isn't connected to real Ring, Bee or Fire TV devices, and it isn't part of this Alexa+ track entry. Details: [`docs/ecosystem.md`](docs/ecosystem.md). There's also an AWS hosting design in [`docs/aws_bedrock_integration.md`](docs/aws_bedrock_integration.md) (not deployed).
 
 ## Quickstart
 
@@ -189,7 +149,7 @@ This installs the pinned runtime dependencies (`mcp==2.2.0`, `uvicorn==0.54.0`, 
 ### 2. Run the tests
 
 ```bash
-pytest tests/ -q                 # 308 tests: engine, handlers, hardening, stress, resilience, ecosystem, telemetry/security
+pytest tests/ -q                 # 324 tests: engine, handlers, hardening, stress, resilience, ecosystem, telemetry/security
 python server/smoke_test.py      # 23 end-to-end checks over real HTTP (starts its own server)
 ```
 
@@ -201,6 +161,8 @@ python server/smoke_test.py      # 23 end-to-end checks over real HTTP (starts i
 | `tests/test_resilience.py` | State-machine transitions, the double validation gate, forced timeouts, malformed streams, cache hits, prefetch, queued logging |
 | `tests/test_ecosystem.py` | Ring/wearable/card schemas, HMAC signing and replay, the visit state machine, consent and no-transcript rules, SSE delivery, the end-to-end chain under 200 ms |
 | `tests/test_telemetry_security.py` | EMF format and dimension allowlist, metrics per tool/stream/transition, OpenTelemetry spans, log redaction and stdout/stderr routing, sanitizer and injection screening |
+| `tests/test_alexa_addon.py` | The add-on manifest meets every QuickStart constraint; assets exist at their declared sizes; the privacy and terms URLs resolve; the privacy policy matches the code |
+| `tests/test_display.py` | Experimental TV display page: strict headers, text-only rendering |
 | `tests/test_stress.py` | Invalid JSON-RPC ids, non-object arguments, half-closed connections, spelled-out acronyms, schema-limit data |
 | `server/smoke_test.py` | Handshake at `2025-03-26` and `2025-11-25`, the demo flow, error contracts, 405/413/403/400/202 transport behavior |
 
@@ -264,17 +226,17 @@ A quick-tunnel URL changes every time cloudflared starts. For a stable URL, set 
 
 ### 5. Connect it to Alexa+
 
-These steps follow Amazon's [Alexa+ MCP QuickStart](https://developer.amazon.com/en-US/docs/alexaplus/add-ons/mcp-toolkit-quickstart.html):
+The full walkthrough (access check, CLI setup, tunnel, manifest, deploy, simulator test) is in [`docs/ALEXA_DEPLOY.md`](docs/ALEXA_DEPLOY.md). In short:
 
 ```bash
-alexa-ai configure                     # Login with Amazon
-alexa-ai new mcp --name "Aegis" --locale en-US \
-  --mcp-server-url "https://<random-words>.trycloudflare.com/mcp"
-# edit addon-package/addon.json: descriptions, example phrases, privacy/terms URLs, icons
-alexa-ai deploy                        # then test in the Alexa web simulator
+scripts/demo_up.sh                                   # server on :8766 plus read-only health checks
+cloudflared tunnel --url http://127.0.0.1:8766 --http-host-header 127.0.0.1:8766
+alexa-ai new mcp --name "Aegis" --locale en-US --mcp-server-url "https://<tunnel-host>/mcp"
+.venv/bin/python scripts/render_addon.py --mcp-url "https://<tunnel-host>/mcp"   # fills addon.json, validates it
+cd addon-package && alexa-ai deploy                  # then: web simulator, Mode: Isolation
 ```
 
-Alexa+ reads the tool list only when you deploy. Run `alexa-ai deploy` again whenever the tools change, or when the tunnel URL changes.
+The manifest's listing text, the six icons and the carousel image (`alexa/`), and the privacy and terms pages ([`docs/PRIVACY.md`](docs/PRIVACY.md), [`docs/TERMS.md`](docs/TERMS.md)) are ready. Alexa+ reads the tool list only when you deploy, so redeploy whenever the tools or the tunnel URL change.
 
 ---
 
@@ -294,20 +256,29 @@ server/                 MCP server (the only place third-party packages are allo
   speech.py             senior-friendly say text
   smoke_test.py         end-to-end HTTP checks
   observability.py      OpenTelemetry spans + EMF metric names
-  ecosystem/            Ring/wearable webhooks, visit state machine, Fire TV SSE cards
-infrastructure/         least-privilege IAM policies (Bedrock, CloudWatch Logs)
+  ecosystem/            experimental, off by default: simulated doorbell -> TV alert pipeline
+alexa/                  Alexa+ add-on kit: addon.template.json, icons and carousel image
+infrastructure/         IAM policy designs for an AWS deployment (not deployed)
 scripts/
-  simulate_ecosystem_event.py   fires Ring -> wearable -> Fire TV over real HTTP
+  demo_up.sh / demo_down.sh     start or stop the server with read-only health checks
+  render_addon.py               fill in and validate addon.json for `alexa-ai deploy`
+  make_alexa_assets.py          regenerate the add-on icons and carousel image
+  demo_voice_flow.py            fallback stand-in client (only if Alexa+ access is blocked)
+  simulate_ecosystem_event.py   experimental doorbell -> TV pipeline simulator
 fixtures/voicemails/    8 scripted voicemails (5 scam, 3 legitimate)
 tests/                  pytest suites
 docs/
   architecture.md               protocol spec: tools, schemas, errors, state machines
   aws_bedrock_integration.md    Strands + Bedrock, DynamoDB state, EC2 behind an ALB (design)
-  developer_feedback.md         detailed Amazon Developer feedback brief (doc quotes, per-item evidence)
-  ecosystem.md                  ambient pipeline: Ring -> wearable -> Fire TV (schemas, privacy, signing)
-  pitch_script.md               1:45 submission video script, opening with the zero-prompt alert
+  developer_feedback.md         feedback evidence per tool (doc quotes, reproductions)
+  ecosystem.md                  experimental ambient pipeline (not part of the submission)
+  ALEXA_DEPLOY.md               deploy to Alexa+ (development stage) and test in the web simulator
+  PITCH_SCRIPT.md               2:45 pitch video script
+  RECORDING_GUIDE.md            step-by-step recording walkthrough for the pitch
+  DEVPOST_DESCRIPTION.md        project text for the Devpost submission form
+  PRIVACY.md / TERMS.md         privacy policy and terms of use (linked from the add-on listing)
 pyproject.toml          dependencies and the [tool.aegis] product agreements
-AMAZON_DEVELOPER_FEEDBACK.md  executive product teardown for the Alexa+ and Bedrock teams
+AMAZON_DEVELOPER_FEEDBACK.md  5-question product feedback for every tool used
 ```
 
 ---
@@ -318,12 +289,11 @@ Every request crosses the same boundaries in the same order. Telemetry is emitte
 
 ```mermaid
 flowchart TB
-    client["Alexa+ / Strands agent<br/>Ring & wearable bridges"]
+    client["Alexa+<br/>(MCP client)"]
 
     subgraph boundary["Zero-trust boundary"]
         direction TB
         guard["RequestGuard<br/>64 KiB cap · 5 s body deadline<br/>JSON-RPC pre-screen"]
-        sig["Webhooks only:<br/>HMAC-SHA256 + replay check"]
         schema["Strict schemas<br/>typed parse → published inputSchema<br/>unknown parameters refused"]
         clean["Sanitizer (aegis/security)<br/>NFKC · strip invisible/bidi/control<br/>length bounds · instruction screen"]
     end
@@ -338,7 +308,7 @@ flowchart TB
     subgraph telemetry["Observability (off the request path)"]
         direction TB
         otel["OpenTelemetry spans<br/>aegis.tool · aegis.fsm.transition"]
-        emf["EMF metrics → stdout<br/>ToolLatency · StreamEvents<br/>StateTransitions · InjectionSuspected<br/>BedrockInput/OutputTokens"]
+        emf["EMF metrics → stdout<br/>ToolLatency · StreamEvents<br/>StateTransitions · InjectionSuspected"]
         logs["Logs → stderr via queue thread<br/>PII + secret redaction"]
     end
 
@@ -346,7 +316,6 @@ flowchart TB
     xray[("OTLP / X-Ray<br/>(when an exporter is configured)")]
 
     client --> guard --> schema --> clean --> engine --> out --> client
-    client -.-> sig --> schema
     engine --> fsm --> out
     guard -.-> emf
     out -.-> otel
@@ -368,11 +337,11 @@ flowchart TB
 - **EMF metrics** (`aegis/telemetry`) go out as one JSON line each on stdout. CloudWatch extracts them without `PutMetricData`. Dimensions come from an allowlist (`Tool`, `Status`, `Stream`, `Outcome`, `Kind`, `From`, `To`, `Model`, `Service`), so ids, numbers and tokens can't become dimensions.
 - **OpenTelemetry spans** use the API that `mcp` already depends on. They cost nothing until you install `opentelemetry-sdk` and an exporter.
 - **Logs** go through a queue to a background thread: human-readable and redacted on stderr, EMF-only on stdout.
-- **Bedrock tokens:** `server.observability.record_bedrock_usage()` is the hook for the Strands agent (see `docs/aws_bedrock_integration.md`).
 - **Getting it to AWS:** least-privilege IAM policies and shipping notes are in [`infrastructure/`](infrastructure/README.md). On AWS Lambda, CloudWatch reads EMF from stdout natively. On EC2, a log shipper has to send it flagged as EMF.
 
 ## Security notes
 
+- **Secrets: audited 2026-10-05.** `.env`, `.env.*` (including the generated `.env.demo`), `logs/` and local assistant settings are git-ignored. No keys or tokens are hardcoded; test files use obvious placeholders. A scan of the working tree and the **full git history** for GitHub, AWS, Slack and private-key patterns found nothing. The experimental pipeline's demo secrets (`.env.demo`) are git-ignored too.
 - **No authentication.** Anyone with the tunnel URL can call the tools. That's acceptable only because every action is simulated and the data is fixture-only. Real blocking or reporting needs OAuth 2.1 account linking first, the only auth Alexa+ supports.
 - **Built-in protections:**
   - loopback-only bind by default;

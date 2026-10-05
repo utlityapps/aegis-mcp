@@ -1,33 +1,27 @@
-# Amazon Developer Product Feedback Brief: Aegis (Alexa+ MCP add-on)
+# Amazon Developer Product Feedback: detailed evidence
 
-**Product area:** Alexa+ Add-ons, MCP Toolkit (`developer.amazon.com/en-US/docs/alexaplus/add-ons/`) and the Amazon Devices Builder Tools MCP server (`@amazon-devices/amazon-devices-buildertools-mcp`)
-**Project:** Aegis, a voice-native voicemail scam-defense companion for older adults. A self-hosted Python MCP server (Streamable HTTP, stateless) behind Alexa+.
-**Track:** Amazon Developer Hackathon "Build, Ship, Shape", Alexa+ track
-**Date:** 2026-10-03
+**Companion to:** [`AMAZON_DEVELOPER_FEEDBACK.md`](../AMAZON_DEVELOPER_FEEDBACK.md). Same tools, same 5 questions; this file holds the quotes, reproductions and workarounds behind each answer.
+**Project:** Aegis: Voice-First Scam Defense on Alexa+ (Alexa+ track, Amazon Developer Hackathon "Build, Ship, Shape")
+**Date:** 2026-10-05
 **Build stack:** Python 3.12, `mcp==2.2.0` (official MCP Python SDK), `uvicorn==0.54.0`, `starlette==1.7.0`
 
-Everything below was observed directly during this build: pages fetched through the Builder Tools MCP server, behavior reproduced against our running server, or package metadata read from installed packages. Where we didn't test a path ourselves (for example the `alexa-ai` CLI or a physical device), we say so instead of guessing.
+Everything here was observed directly: pages fetched through the Amazon Devices Builder Tools MCP server, behavior reproduced against our own server, or package metadata read from installed packages. Where we haven't exercised something for real yet (deploying to a live Alexa+ client), we say so.
 
 ---
 
-## Summary
+## Tool 1: Alexa+ MCP Toolkit and Streamable HTTP (track tool)
 
-| # | Area | Severity | One-line finding |
-|---|---|---|---|
-| 1 | Protocol versions | **High** | The docs say Alexa+ supports MCP 2025-11-25, but the documented client handshake requests `2025-03-26`, while also using fields that only exist from 2025-06-18. |
-| 2 | Auth spec mismatch | Medium | Alexa+ forbids `WWW-Authenticate` on `401`; the official MCP SDK's auth middleware sends it. |
-| 3 | Missing client contract | **High** | Undocumented Alexa+ client behavior: headers, retries, timeouts, id types, batching, egress IPs. We had to defend against every possibility. |
-| 4 | Missing request context | **High** | Tools can't tell a screenless Echo Dot from an Echo Show, yet certification requires adapting voice-only output. |
-| 5 | Missing auth tier | Medium | It's either full OAuth 2.1 + PKCE or no auth; there's no option between them for non-personal tools. |
-| 6 | Interim-progress requirement | Medium | Certification requires a "still working" message, but the documented transport (JSON responses) has no channel for one. |
-| 7 | No local conformance harness | Medium | No runnable Alexa+ client emulator or conformance suite for CI. We wrote 22 raw-HTTP smoke checks by guessing the client's behavior. |
-| 8 | Builder Tools MCP server DX | Medium | A mandatory `set_project_context` call, a 111k-character listing, every page wrapped in its full navigation sidebar, and a device-OS filter that doesn't fit Alexa+. |
-| 9 | Doc defects | Low | A wrong link target, an empty "Security and data policies" section, and a capabilities page that only links elsewhere. |
-| 10 | Ecosystem: MCP Python SDK and Strands | Info | Upstream issues we had to work around. Not Amazon's code, but they shape the Alexa+ developer experience. |
+### 1. What we used it for
+A self-hosted MCP server (five tools, stateless Streamable HTTP, JSON responses) built to the Alexa+ MCP QuickStart, Client and App Lifecycle page, design guide and Functional Requirements. Deployment to the Alexa+ development stage is documented in [`ALEXA_DEPLOY.md`](ALEXA_DEPLOY.md).
 
----
+### 2. What worked well
+- **Clear certification criteria.** Functional Requirements §2 (errors), §9 (voice-only) and §13 (MCP tool validation) turned directly into tests: one next step per error, a 5-option limit, and an `outputSchema` check on every result.
+- **"Declare only what you honor"** (design guide) shaped our inputs. We accept no phone numbers from the client, have no ignored filters, and set `additionalProperties: false` everywhere.
+- **Standard MCP, not a proprietary envelope.** Nothing in the server is Alexa-specific, so any MCP client can drive it.
 
-## 1. Protocol version mismatch (High)
+### 3. What needs work: evidence
+
+#### Protocol version mismatch (High)
 
 **Observed:**
 - *Alexa+ MCP Toolkit Overview:* "Alexa+ for Builders supports the 2025-11-25 version of the MCP specification."
@@ -45,9 +39,7 @@ Everything below was observed directly during this build: pages fetched through 
 2. Fix the lifecycle sample so the version and the fields it uses agree.
 3. Say whether Alexa+ reads `structuredContent`, `content`, or both, and whether it validates against `outputSchema`.
 
----
-
-## 2. Authentication: Alexa+ conflicts with the official SDK's defaults (Medium)
+#### Authentication: Alexa+ conflicts with the official SDK's defaults (Medium)
 
 **Observed** (QuickStart, "Authentication checklist"):
 - "Your MCP server returns `401 Unauthorized` (**without** a `WWW-Authenticate` header) for unauthenticated requests."
@@ -60,18 +52,16 @@ In the MCP authorization spec, `WWW-Authenticate` with a `resource_metadata` URL
 2. Until then, flag the conflict prominently and show how to suppress the header in the major SDKs.
 3. Publish a timeline for DCR / CIMD support. Both are listed as unsupported, and CIMD is the client-registration approach the 2025-11-25 spec introduced.
 
----
+#### Undocumented Alexa+ client behavior (High)
 
-## 3. Undocumented Alexa+ client behavior (High)
-
-To make the server robust we needed to know how the Alexa+ client behaves on the wire. None of the following is documented. We had to support every possibility, and in several cases we found real failure modes in the SDK while doing it (see §10).
+To make the server robust we needed to know how the Alexa+ client behaves on the wire. None of the following is documented. We had to support every possibility, and in several cases we found real failure modes in the SDK while doing it (see Tool 2: MCP Python SDK).
 
 | Question | Why it matters | What we had to do |
 |---|---|---|
 | Does Alexa+ send `Mcp-Session-Id`? Does it reuse sessions? | Stateless vs stateful server design | Run stateless and ignore any session id. |
 | Does it send the `MCP-Protocol-Version` header after `initialize`? | Spec-mandated 400 on an unsupported value | Accept it absent or present. |
 | Does it ever open `GET /mcp` (SSE) or send `DELETE`? | Stream lifecycle, resource use | Return 405 for both in stateless mode. |
-| Request `id` types: string, integer, or other? | The SDK silently drops non-integer, non-string ids (see §10) | Pre-screen ids and answer `-32600`. |
+| Request `id` types: string, integer, or other? | The SDK silently drops non-integer, non-string ids (see Tool 2: MCP Python SDK) | Pre-screen ids and answer `-32600`. |
 | JSON-RPC **batching** under 2025-03-26 (which permits it)? | The SDK rejects batch arrays with 400 | Unsupported. Undocumented whether Alexa+ ever batches. |
 | **Timeout and retry policy** for `tools/call` | An `approve` retried after a timeout reuses a single-use token, so the retry gets `permission_denied` even though the action ran | Designed around it: re-staging returns `already_done`. A documented retry policy, or an idempotency key in `_meta`, would remove the guesswork. |
 | Where the **500 ms** budget is measured (from the Alexa edge? does TLS count?) | Region choice, cold starts | Measured server-side only (under 1 ms per tool call). |
@@ -81,9 +71,7 @@ To make the server robust we needed to know how the Alexa+ client behaves on the
 
 **Suggested improvement:** Publish an **"Alexa+ MCP Client Contract"** page covering the transport (headers, session use, SSE, batching), id types, timeouts and retries, concurrency per customer, egress ranges, and the exact negotiated version. One page would have saved most of our transport-hardening time.
 
----
-
-## 4. Tools can't see device modality or locale (High)
+#### Tools can't see device modality or locale (High)
 
 **Observed** (Functional Requirements):
 - §3: "Provide a clear spoken or visual message when a feature is unavailable on the current device type."
@@ -94,17 +82,13 @@ But neither the `tools/call` payload nor the documented `_meta` carries **device
 
 **Suggested improvement:** Pass a small, documented context object in `params._meta` on every `tools/call`, for example `alexa/device: {hasScreen, viewportClass}`, `alexa/locale` and `alexa/timeZone`. MCP reserves `_meta` for exactly this kind of host context.
 
----
-
-## 5. No auth tier between "none" and full OAuth (Medium)
+#### No auth tier between "none" and full OAuth (Medium)
 
 Aegis tools contain no personal account data; they act on fixture voicemails. The only documented protection, though, is OAuth 2.1 + PKCE account linking. That's heavy for a hackathon build and for non-personal tools. We shipped with **no auth** (a recorded product decision) and rely on a WAF rate limit, a 64 KiB body cap and simulated actions.
 
 **Suggested improvement:** Support a **service-level credential**: a per-add-on shared secret, or a signed request from Alexa+ that the server can verify. That would let developers prove a request came from Alexa+ without implementing per-customer account linking.
 
----
-
-## 6. The "still working" requirement has no transport (Medium)
+#### The "still working" requirement has no transport (Medium)
 
 **Observed** (Functional Requirements §2): "Surface an interim 'still working' message when tool calls are slow."
 
@@ -112,11 +96,9 @@ MCP's mechanism for this is progress notifications, sent over an SSE response st
 
 **Suggested improvement:** Document how Alexa+ produces the interim message. Is it client-side text from a tool annotation or `_meta.ui.invoking`, progress notifications over SSE, or something else? Then say whether voice-only (non-MCP-App) add-ons can use it.
 
----
+#### No local conformance harness (Medium)
 
-## 7. No local conformance harness (Medium)
-
-The docs list a Local Inspector, the web simulator and devices (we didn't get to them in this build). We found **no downloadable Alexa+ client emulator or conformance suite** we could run headless in CI. We wrote our own 22 raw-HTTP smoke checks covering:
+The docs list a Local Inspector, the web simulator and devices (we didn't get to them in this build). We found **no downloadable Alexa+ client emulator or conformance suite** we could run headless in CI. We wrote our own 23 raw-HTTP smoke checks covering:
 - handshake at 2025-03-26 and 2025-11-25;
 - `tools/list` shape;
 - `isError` contracts;
@@ -127,32 +109,35 @@ All of that is our best guess at Alexa+ behavior, not a test against it.
 
 **Suggested improvement:** Publish an `alexa-ai test conformance <url>` command (or a container image) that replays real Alexa+ client traffic, checks the certification §13 "MCP Tool Validation" items, and exits non-zero for CI.
 
----
-
-## 8. Amazon Devices Builder Tools MCP server DX (Medium)
-
-We used `amazon-devices-buildertools` from Claude Code to fetch the Alexa+ docs.
-
-| Friction | Detail | Suggestion |
-|---|---|---|
-| Mandatory handshake | The first `search_documentation` calls failed with `PROJECT_CONTEXT_REQUIRED` until we called `set_project_context`, even with no `.adbt-config.json` (passing `{}` was enough). | Default to an empty context, or make the requirement a server instruction rather than an error. |
-| Platform filter doesn't fit Alexa+ | `search_documentation` and `list_documents` require `target_platform.device_os` (`vega_os` / `fire_os`). Alexa+ add-ons are cloud MCP servers with no device OS; we passed both values to get Alexa+ results. | Add `alexa_plus` (or make the filter optional) and an add-ons document type. |
-| Oversized output | `list_documents` returned **111,085 characters on one line**, beyond our client's tool-output limit. It had to be saved to a file and sliced. | Paginate, add a `query`/`category` filter, and return compact rows. |
-| Navigation chrome in every page | Each `read_document` result for an Alexa+ page included the **entire left navigation tree** (about 65 links) before the content. Reading 5 pages repeated it 5 times. | Strip site chrome; return the article body plus an optional table of contents. |
-| Search relevance | A search for *"event schema JSON payload Alexa"* returned Smart Home `Alexa.DataController` and skill-development notification schemas, neither of which applies to MCP add-ons. | Separate Alexa+ add-on docs from classic Alexa skills and Smart Home in the index, or label results by product. |
-
----
-
-## 9. Documentation defects (Low)
+#### Documentation defects (Low)
 
 1. **Wrong link target.** On *Alexa+ MCP QuickStart* → "Technical requirements", the text "**MCP Apps**" links to `…/2025-11-25/basic/transports#streamable-http` (the transports page), not to the MCP Apps extension.
 2. **Placeholder section.** QuickStart → "Security and data policies" says only: "Security and data policy details will be published in a future revision of this guide." Developers can't design data handling for certification without it.
 3. **Thin capabilities page.** *Supported Capabilities* lists only two links (Authentication, Account Linking). It doesn't say what MCP features the client supports: elicitation, sampling, roots, resources, prompts, progress, logging, cancellation.
 4. **No add-on concept of "raw event schemas".** Coming from Alexa skills, we looked for request/event schemas. MCP add-ons have none (the wire format is plain MCP JSON-RPC), but the docs never say so. A sentence like "There are no Alexa-specific event envelopes; your server receives standard MCP requests, examples below" would prevent that search.
 
+### 4. Onboarding (zero to "hello world")
+- **Server side was fast.** QuickStart to a passing `initialize` at `2025-03-26` from our own client took hours.
+- **Live Alexa+ isn't done.** We haven't completed `alexa-ai deploy`, so we've never seen Alexa+'s real requests.
+- **The friction:** no headless client or conformance test (we wrote 23 smoke checks by guessing), and no tunnel blueprint. Our DNS-rebinding Host check answered 421 to cloudflared traffic until we set `--http-host-header` or allowlisted the tunnel hostname.
+
+- **Alexa AI CLI setup (from the docs):** for a self-hosted MCP add-on it still requires an AWS account, an IAM user assuming the Amazon-owned role `arn:aws:iam::372468808636:role/AddOn3PDeveloperToolsRead`, Git configured for CodeCommit, and npm pointed at a private CodeArtifact registry whose token *"is valid for 12 hours"*. It also refers to *"the AWS account that you provided to the Alexa Solutions Architect"*, with no documented way to request access.
+
+### 5. Would we build with it again?
+**Yes.** Standard MCP means one server for every client. A client-contract page and a conformance test would close most of the gaps above.
+
 ---
 
-## 10. Ecosystem notes: MCP Python SDK and Strands (Info)
+## Tool 2: MCP Python SDK (`mcp==2.2.0`)
+
+### 1. What we used it for
+The protocol layer under Aegis: the low-level `Server`, the stateless Streamable HTTP transport and JSON responses.
+
+### 2. What worked well
+Version negotiation across four protocol versions, a working endpoint in a few lines, and an in-process `Client` that made end-to-end tests easy.
+
+### 3. What needs work: evidence
+These are upstream behaviors (MCP Python SDK 2.2.0, uvicorn 0.54.0), not Amazon code. They're listed because they're the stack the Alexa+ docs lead Python developers to.
 
 These are **not Amazon products**. They're included because any Python developer building an Alexa+ add-on with the official SDK will hit them, and Amazon's samples or Agent Skill could warn about them. Each was reproduced against `mcp==2.2.0`, then fixed or worked around in our code.
 
@@ -165,25 +150,50 @@ These are **not Amazon products**. They're included because any Python developer
 | e | No request-body read deadline: a stalled body holds the connection indefinitely (observed past 40 s) | Slowloris exposure | 5 s deadline then 408, plus a uvicorn concurrency cap |
 | f | `initialize` also accepts `2024-11-05` | Wider surface than intended | Documented; not overridden |
 | g | uvicorn (h11) closes the socket on client half-close: **the tool runs but the response is discarded** | An approval can execute while its confirmation is lost | Subclassed the protocol to keep the socket writable until the response is sent |
-| h | `strands-agents==1.57.2` requires `mcp<2.2`, so it can't share an environment with an `mcp==2.2.0` server | A Bedrock agent harness needs its own process and venv | Separate `agent/` deployable (see `docs/aws_bedrock_integration.md`) |
 
 **Suggestion for Amazon:** The Add-on Agent Skill and sample servers could ship a short "production hardening" checklist covering items a–g, since every Alexa+ add-on exposes an MCP endpoint to the internet.
 
----
+### 4. Onboarding (zero to "hello world")
+`pip install mcp`, then a passing `initialize` within an hour. The version-2 API differs from most published examples (which use `FastMCP`), so we read the SDK source to find `Server(on_list_tools=…, on_call_tool=…)`.
 
-## What worked well
-
-- **Clear certification criteria.** The Functional Requirements page, especially §2 Error Handling, §9 Voice-Only and §13 MCP Tool Validation, was specific enough to turn into tests directly. Our output-schema check, "one next step per error" rule and 5-option limit came straight from it.
-- **The design guide's "Declare only what you honor"** rule, and its advice that the model trusts the schema, shaped our inputs. We accept no phone numbers from the client, have no ignored filters, and set `additionalProperties: false` everywhere.
-- **Standard MCP, not a proprietary envelope.** Because Alexa+ speaks plain MCP, the same server worked unchanged with a second client (Strands on Bedrock) in our interop test.
-- **Builder Tools MCP inside the coding agent.** Fetching official docs from inside Claude Code, despite the friction in §8, kept the build grounded in the actual docs.
+### 5. Would we build with it again?
+**Yes.** The fixes are small; they should ship as defaults (body deadline, id screening, half-close handling).
 
 ---
 
-## Top five asks, in priority order
+## Tool 3: Amazon Devices Builder Tools MCP server
 
-1. Publish an **Alexa+ MCP Client Contract** page (§3) and fix the **protocol version story** (§1).
-2. **Pass device modality and locale** in `tools/call` `_meta` (§4).
-3. **Resolve the `WWW-Authenticate` conflict** with the MCP auth spec (§2) and add a **service-level credential** tier (§5).
-4. Ship a **headless conformance test** for CI (§7).
-5. Make the **Builder Tools MCP server** add-on-aware: an Alexa+ filter, paginated listings, and pages without navigation chrome (§8).
+### 1. What we used it for
+Reading the Alexa+ add-on documentation from inside our coding agent (Claude Code).
+
+### 2. What worked well
+Official docs in context. It's how we found the Alexa+ version mismatch, the CLI's setup requirements and the simulator's Isolation mode.
+
+### 3. What needs work: evidence
+
+We used `amazon-devices-buildertools` from Claude Code to fetch the Alexa+ docs.
+
+| Friction | Detail | Suggestion |
+|---|---|---|
+| Mandatory handshake | The first `search_documentation` calls failed with `PROJECT_CONTEXT_REQUIRED` until we called `set_project_context`, even with no `.adbt-config.json` (passing `{}` was enough). | Default to an empty context, or make the requirement a server instruction rather than an error. |
+| Platform filter doesn't fit Alexa+ | `search_documentation` and `list_documents` require `target_platform.device_os` (`vega_os` / `fire_os`). Alexa+ add-ons are cloud MCP servers with no device OS; we passed both values to get Alexa+ results. | Add `alexa_plus` (or make the filter optional) and an add-ons document type. |
+| Oversized output | `list_documents` returned **111,085 characters on one line**, beyond our client's tool-output limit. It had to be saved to a file and sliced. | Paginate, add a `query`/`category` filter, and return compact rows. |
+| Navigation chrome in every page | Each `read_document` result for an Alexa+ page included the **entire left navigation tree** (about 65 links) before the content. Reading 5 pages repeated it 5 times. | Strip site chrome; return the article body plus an optional table of contents. |
+| Search relevance | A search for *"event schema JSON payload Alexa"* returned Smart Home `Alexa.DataController` and skill-development notification schemas, neither of which applies to MCP add-ons. | Separate Alexa+ add-on docs from classic Alexa skills and Smart Home in the index, or label results by product. |
+
+### 4. Onboarding (zero to "hello world")
+One `.mcp.json` entry (`npx -y @amazon-devices/amazon-devices-buildertools-mcp@latest`). The first searches failed with `PROJECT_CONTEXT_REQUIRED`; `set_project_context({})` fixed it.
+
+### 5. Would we build with it again?
+**Yes.** Make it Alexa+-aware (a filter, and pages without the navigation) and it becomes indispensable.
+
+
+---
+
+## Top asks, in priority order
+
+1. **Alexa+:** fix or document the protocol version; publish a client-contract page; pass device and locale context in `tools/call` `_meta`.
+2. **Alexa AI CLI:** a public `npm` package for MCP add-ons, no AWS role assumption, and a documented access-request path.
+3. **Alexa+:** a headless conformance test for CI, and a tunnel blueprint.
+4. **MCP Python SDK:** ship body deadlines, request-id screening and half-close handling by default.
+5. **Builder Tools MCP:** an Alexa+ filter, paginated listings, and pages without navigation chrome.

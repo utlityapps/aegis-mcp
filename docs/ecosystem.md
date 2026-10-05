@@ -1,6 +1,6 @@
 # Aegis ecosystem pipeline: Ring → wearable → Fire TV (simulator-grade)
 
-**Status:** Implemented and tested against Aegis's own simulator (`scripts/simulate_ecosystem_event.py`). **Not connected to real Ring, Bee or Fire TV devices.** Ring, Bee and Fire TV publish no third-party webhook, event or ambient-push APIs, so the payload formats below are **Aegis-defined**, and a real deployment needs a bridge that maps vendor events onto them.
+**Status:** Implemented and tested against Aegis's own simulator (`scripts/simulate_ecosystem_event.py`). **Not connected to real Ring, Bee or Fire TV devices.** The payload formats below are **Aegis-defined bridge formats**. Ring *does* publish a partner API with HMAC-signed webhooks ([developer.amazon.com/docs/ring](https://developer.amazon.com/docs/ring/get-started.html)), which Aegis hasn't adopted yet. Fire TV pushes from a server go through Amazon Device Messaging to a Fire TV app, which isn't built. We found no Bee developer API in the Amazon developer docs.
 **Code:** `server/ecosystem/`. Engine rules are unchanged: verdicts come only from `aegis/engine.py`.
 
 ## Flow
@@ -67,6 +67,8 @@ Defined in `server/ecosystem/schemas.py` (JSON Schema 2020-12, closed objects):
 
 ## Not done (needs real integrations)
 
-- Bridges from real Ring, Bee and Fire TV APIs, if and when those vendors offer them.
+- Native Ring webhooks: the v1.1 payload (`meta.request_id`, `data.type` such as `button_press` or `motion_detected`), `X-Signature` HMAC-SHA256 verification, and a 200 reply within 5 seconds.
+- A Fire TV app (Fire OS or Vega OS) that receives cards through Amazon Device Messaging and shows them as heads-up notifications.
+- Bee data access, if a developer API becomes available.
 - A Fire TV (Vega / Fire OS) app that subscribes to `/events/firetv` and renders the card.
 - Persistence: visits, seen event ids and subscribers live in memory, like the approval ledger.

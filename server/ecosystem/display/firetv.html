@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aegis · Simulated Fire TV display</title>
+  <link rel="stylesheet" href="/display/firetv.css">
+  <script src="/display/firetv.js" defer></script>
+</head>
+<body>
+  <div class="tv">
+    <div class="show" aria-hidden="true">
+      <div class="show-title">Evening Garden Hour</div>
+      <div class="show-sub">Now playing</div>
+    </div>
+
+    <div class="label">SIMULATED FIRE TV DISPLAY · live from <code>/events/firetv</code></div>
+    <div id="status" class="status" data-state="connecting">Connecting…</div>
+
+    <section id="card" class="card" data-severity="info" hidden aria-live="assertive">
+      <div class="card-head">
+        <span class="badge" id="card-badge"></span>
+        <span class="shield" aria-hidden="true">🛡️ Aegis</span>
+      </div>
+      <h1 id="card-title"></h1>
+      <p id="card-body"></p>
+      <ul id="card-evidence"></ul>
+      <div id="card-threat" class="threat"></div>
+      <div id="card-buttons" class="buttons"></div>
+    </section>
+
+    <section id="help" class="help" hidden>
+      <h1>Display token missing</h1>
+      <p>Open this page as <code>/display/firetv#token=&lt;AEGIS_DISPLAY_TOKEN&gt;</code>.
+         The token stays in the URL fragment, which browsers never send to the server.</p>
+    </section>
+  </div>
+</body>
+</html>

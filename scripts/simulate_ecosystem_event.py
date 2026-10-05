@@ -14,14 +14,17 @@ Standard library only. Exits non-zero if any step fails or a card doesn't arrive
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import queue
 import secrets
+import socket
 import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -41,6 +44,7 @@ SCENARIOS: dict[str, tuple[str, str]] = {
     ),
     "benign": ("Hi, it's Dave from next door. I brought back your ladder. Have a good one!", "info"),
 }
+SCENARIOS["suspected_doorstep_scam"] = SCENARIOS["scam"]  # the name used in the demo script
 
 
 @dataclass
@@ -70,16 +74,20 @@ class CardListener(threading.Thread):
         self.cards: queue.Queue[dict[str, Any]] = queue.Queue()
         self.connected = threading.Event()
         self.failure: str | None = None
-        self._request = urllib.request.Request(
-            f"{base_url}/events/firetv", headers={"Authorization": f"Bearer {token}", "Accept": "text/event-stream"}
-        )
-        self._response: Any = None
+        url = urllib.parse.urlsplit(base_url)
+        self._conn = http.client.HTTPConnection(url.hostname or "127.0.0.1", url.port or 80, timeout=30)
+        self._headers = {"Authorization": f"Bearer {token}", "Accept": "text/event-stream"}
 
     def run(self) -> None:
         try:
-            self._response = urllib.request.urlopen(self._request, timeout=30)
+            self._conn.request("GET", "/events/firetv", headers=self._headers)
+            response = self._conn.getresponse()
+            if response.status != 200:
+                self.failure = f"display stream refused: HTTP {response.status}"
+                self.connected.set()
+                return
             data: list[str] = []
-            for raw in self._response:
+            for raw in response:
                 line = raw.decode().rstrip("\n")
                 if line == ": connected":
                     self.connected.set()
@@ -88,17 +96,19 @@ class CardListener(threading.Thread):
                 elif line == "" and data:
                     self.cards.put(json.loads("".join(data)))
                     data = []
-        except urllib.error.HTTPError as exc:
-            self.failure = f"display stream refused: HTTP {exc.code}"
-            self.connected.set()
         except Exception as exc:  # the stream closing at shutdown also lands here
             if not self.connected.is_set():
                 self.failure = f"display stream failed: {exc}"
                 self.connected.set()
 
     def close(self) -> None:
-        if self._response is not None:
-            self._response.close()
+        """Shut the socket down so the reader thread returns now, not at the next 15 s heartbeat."""
+        if self._conn.sock is not None:
+            try:
+                self._conn.sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        self._conn.close()
 
 
 def post_signed(base_url: str, path: str, secret: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
@@ -117,7 +127,9 @@ def post_signed(base_url: str, path: str, secret: str, payload: dict[str, Any]) 
         return exc.code, json.loads(exc.read() or b"{}")
 
 
-def run_chain(base_url: str, secret: str, token: str, scenario: str, card_timeout: float = 5.0) -> ChainResult:
+def run_chain(
+    base_url: str, secret: str, token: str, scenario: str, card_timeout: float = 5.0, gap: float = 0.0
+) -> ChainResult:
     transcript, expected_severity = SCENARIOS[scenario]
     result = ChainResult()
     listener = CardListener(base_url, token)
@@ -151,6 +163,7 @@ def run_chain(base_url: str, secret: str, token: str, scenario: str, card_timeou
         if status != 202 or next_card("the doorbell event") is None:
             result.error = result.error or f"ring webhook returned {status}: {reply}"
             return result
+        time.sleep(gap)  # lets the info card stay on screen before the visitor's words arrive
 
         started = time.perf_counter()
         status, reply = post_signed(base_url, "/webhooks/bee", secret, {
@@ -177,15 +190,16 @@ def run_chain(base_url: str, secret: str, token: str, scenario: str, card_timeou
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--base-url", default="http://127.0.0.1:8000")
+    parser.add_argument("--base-url", default=f"http://127.0.0.1:{os.environ.get('AEGIS_PORT', '8000')}")
     parser.add_argument("--scenario", choices=sorted(SCENARIOS), default="scam")
+    parser.add_argument("--gap", type=float, default=0.0, help="seconds between the doorbell and the wearable event")
     args = parser.parse_args()
     secret, token = os.environ.get("AEGIS_WEBHOOK_SECRET"), os.environ.get("AEGIS_DISPLAY_TOKEN")
     if not secret or not token:
         print("Set AEGIS_WEBHOOK_SECRET and AEGIS_DISPLAY_TOKEN (the same values the server uses).", file=sys.stderr)
         return 2
 
-    result = run_chain(args.base_url.rstrip("/"), secret, token, args.scenario)
+    result = run_chain(args.base_url.rstrip("/"), secret, token, args.scenario, gap=max(0.0, min(args.gap, 30.0)))
     for step in result.steps:
         print(f"{'OK ' if step.status == 202 else 'ERR'} {step.name:44} HTTP {step.status}  {step.ms:6.1f} ms")
     for card in result.cards:

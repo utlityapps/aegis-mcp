@@ -6,7 +6,7 @@
 # depends on, and the product agreements the build must honor.
 #
 # Build status as of 2026-10-03 (verified on Python 3.12.15, mcp 2.2.0):
-#   - tests/: 308/308 pass (engine, handlers, hardening, stress, resilience, ecosystem, telemetry/security)
+#   - tests/: 324/324 pass (engine, handlers, hardening, stress, resilience, ecosystem, telemetry/security)
 #   - server/: 23/23 smoke checks pass (server/smoke_test.py), incl. the Ring -> Bee -> Fire TV chain
 # =============================================================================
 
@@ -47,7 +47,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest",      # test runner: `pytest tests/ -q` (308 tests)
+    "pytest",      # test runner: `pytest tests/ -q` (324 tests)
     "opentelemetry-sdk==1.45.0",  # tests record spans with the in-memory exporter
 ]
 
@@ -111,6 +111,7 @@ fixtures = 8                 # 5 scam + 3 legitimate, in fixtures/voicemails/
 fixture_required_fields = ["voicemail_id", "received_at", "caller_number"]  # caller_name optional; exactly one fixture matches "IRS"
 
 [tool.aegis.ecosystem]
+# EXPERIMENTAL, not part of the Alexa+ submission (decided 2026-10-05). Off unless both secrets are set.
 # Ring -> wearable -> Fire TV pipeline (server/ecosystem/, docs/ecosystem.md). Decided 2026-10-04.
 simulator_only = true                  # Aegis-defined schemas; no real Ring/Bee/Fire TV integration exists yet
 verdicts = "deterministic engine"      # no_llm_verdicts applies here too; Bedrock may only phrase text
@@ -148,4 +149,7 @@ deadline = "2026-10-23T12:00:00-07:00"
 repo_visibility = "public"  # decided 2026-10-03: public MIT repo `aegis-mcp` (qualifies for the Open Source mini challenge)
 video = "public, English, under 3 minutes, YouTube or Vimeo"
 submission_fields = ["repo link", "video link", "text description", "product feedback", "track selection (Alexa+)"]
+mini_challenges = []          # decided 2026-10-05: Alexa+ track only; AWS Builder and Open Source skipped
+mcp_spec_minimum = "2025-11-25"  # hackathon rule; server also accepts 2025-03-26 (documented Alexa+ handshake)
+video_must_show = "Alexa+ calling the server (web simulator or Echo)"  # see docs/ALEXA_DEPLOY.md
 friction_log = "optional, drafted, worth up to 10% judging bonus"

@@ -16,6 +16,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from server.cache import TTLCache
+from server.ecosystem.display import display_routes
 from server.ecosystem.pipeline import EcosystemPipeline, PipelineOutcome
 from server.observability import stream_outcome
 from server.ecosystem.schemas import RING_EVENT_SCHEMA, WEARABLE_CONTEXT_SCHEMA
@@ -180,4 +181,5 @@ def ecosystem_routes(pipeline: EcosystemPipeline, webhook_secret: str, display_t
         Route("/webhooks/ring", ring_webhook, methods=["POST"]),
         Route("/webhooks/bee", wearable_webhook, methods=["POST"]),
         Route("/events/firetv", firetv_stream, methods=["GET"]),
+        *display_routes(),
     ]

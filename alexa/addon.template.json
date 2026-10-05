@@ -1,0 +1,61 @@
+{
+  "manifestVersion": "1.0",
+  "storeListing": {
+    "distributionCountries": ["US"],
+    "locales": {
+      "en-US": {
+        "default": "DEFAULT",
+        "name": {
+          "value": "Aegis",
+          "spokenForm": { "format": "ipa", "value": "ˈiːdʒɪs" }
+        },
+        "shortDescription": "Checks your voicemails for scams and explains the warning signs in plain words. Acts only after you say yes.",
+        "fullDescription": "Aegis helps older adults and their families spot phone scams. Ask Aegis to check a voicemail, for example the one you just got from the IRS, and it tells you whether the message looks like a scam, suspicious, or safe, and explains the warning signs in plain words, such as demands for gift cards, threats of arrest, or requests to keep a call secret. Verdicts come from fixed, published rules, not guesswork. If a message looks like a scam, Aegis can block the caller or report the call, but only after it reads back exactly what it will do and you clearly say yes. This is a practice version made for a hackathon: it checks a set of sample voicemails included with the add-on, and blocking and reporting are simulated, so no real call is blocked or reported. No account, subscription, or setup is needed. Aegis does not record your voice and does not collect personal information.",
+        "examplePhrases": [
+          "Ask Aegis to check the voicemail I just got from the IRS",
+          "Ask Aegis what voicemails I have",
+          "Ask Aegis why that voicemail looks like a scam",
+          "Ask Aegis to block that caller"
+        ],
+        "privacyAndCompliance": {
+          "privacyPolicyUrl": "https://github.com/utlityapps/aegis-mcp/blob/main/docs/PRIVACY.md",
+          "termsOfUseUrl": "https://github.com/utlityapps/aegis-mcp/blob/main/docs/TERMS.md"
+        },
+        "mediaAssets": {
+          "icons": {
+            "light": [
+              { "size": "72x72", "uri": "__ASSETS_BASE__/icon-72x72.png" },
+              { "size": "64x64", "uri": "__ASSETS_BASE__/icon-64x64.png" },
+              { "size": "88x88", "uri": "__ASSETS_BASE__/icon-88x88.png" },
+              { "size": "126x126", "uri": "__ASSETS_BASE__/icon-126x126.png" },
+              { "size": "180x180", "uri": "__ASSETS_BASE__/icon-180x180.png" },
+              { "size": "241x241", "uri": "__ASSETS_BASE__/icon-241x241.png" }
+            ],
+            "dark": []
+          },
+          "carouselImages": [
+            {
+              "uri": "__ASSETS_BASE__/carousel-600x900.png",
+              "altText": "A white shield with a red check mark on a deep blue background, the Aegis scam-defense emblem",
+              "size": "600x900"
+            }
+          ],
+          "bannerImages": []
+        }
+      }
+    }
+  },
+  "integrations": [
+    {
+      "type": "MCP",
+      "config": {
+        "endpoints": {
+          "default": {
+            "type": "HTTPS",
+            "uri": "__MCP_SERVER_URL__"
+          }
+        }
+      }
+    }
+  ]
+}

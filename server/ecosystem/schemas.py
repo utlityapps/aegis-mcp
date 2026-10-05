@@ -1,8 +1,9 @@
 """Aegis-defined JSON Schemas for the ecosystem pipeline.
 
-These are **Aegis's own** event contracts. Ring, Bee and Fire TV publish no third-party
-webhook or ambient-push schemas, so a real integration needs a bridge that maps vendor
-events onto these shapes. Every schema is closed (`additionalProperties: false`).
+These are **Aegis's own** bridge contracts, not vendor formats. Ring publishes its own signed webhook
+format (v1.1, `X-Signature`), which a bridge or a future native endpoint must map onto these shapes;
+Fire TV delivery would go through Amazon Device Messaging to an app. Every schema is closed
+(`additionalProperties: false`).
 """
 
 from __future__ import annotations
