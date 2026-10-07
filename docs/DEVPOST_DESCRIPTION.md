@@ -57,7 +57,7 @@ Everything in the repository was built during the hackathon window, from the pro
 Our 5-question feedback for each tool used (the Alexa+ MCP Toolkit, the MCP Python SDK and the Amazon Devices Builder Tools MCP server) is in [`AMAZON_DEVELOPER_FEEDBACK.md`](../AMAZON_DEVELOPER_FEEDBACK.md). The headlines:
 - Alexa+ docs promise MCP 2025-11-25, but the documented handshake sends 2025-03-26.
 - Tools get no device context, so they can't adapt for screenless Echo Dots.
-- The Alexa AI CLI requires AWS role assumption and a private npm registry, even for a self-hosted MCP add-on.
+- The MCP Toolkit is preview-only, but only the docs home page says so. The setup pages don't, so we built the full AWS setup before an `AccessDenied` and a support case told us. We ask for the notice on every setup page.
 
 ## Try it
 - **Repository:** <https://github.com/utlityapps/aegis-mcp> (MIT)
