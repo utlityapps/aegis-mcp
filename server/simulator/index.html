@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aegis Voice Simulator</title>
+<link rel="stylesheet" href="/simulator/simulator.css">
+<script src="/simulator/simulator.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <svg class="shield" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3Z"/><path class="tick" d="m8.5 12 2.5 2.5 4.5-5"/></svg>
+    <div>
+      <h1>Aegis Voice Simulator</h1>
+      <p class="sub">A web MCP client standing in for Alexa+, calling the live Aegis server</p>
+    </div>
+  </div>
+  <div class="conn">
+    <span id="conn-dot" class="dot" aria-hidden="true"></span>
+    <span id="conn-text">Not connected</span>
+    <label class="proto">Protocol
+      <select id="proto">
+        <option value="2025-11-25" selected>2025-11-25</option>
+        <option value="2025-03-26">2025-03-26 (Alexa+ sample)</option>
+      </select>
+    </label>
+    <button id="reconnect" type="button" class="ghost">Reconnect</button>
+  </div>
+</header>
+
+<main class="grid">
+  <section class="device" aria-label="Conversation">
+    <div class="ring-wrap" aria-hidden="true"><div id="ring" class="ring"></div></div>
+    <ol id="chat" class="chat" aria-live="polite"></ol>
+
+    <div class="try">
+      <span class="try-label">Try saying</span>
+      <div id="chips" class="chips"></div>
+    </div>
+
+    <form id="ask" class="ask" autocomplete="off">
+      <button id="mic" type="button" class="mic" aria-label="Speak" title="Speak (uses your browser's speech recognition)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+      </button>
+      <input id="utterance" type="text" placeholder="Type what you'd say to Alexa" maxlength="200" aria-label="What you say">
+      <button type="submit" class="send">Send</button>
+    </form>
+    <div class="opts">
+      <label><input id="speak" type="checkbox" checked> Read replies aloud</label>
+      <button id="reset" type="button" class="ghost small">New conversation</button>
+    </div>
+  </section>
+
+  <section class="wire" aria-label="MCP traffic">
+    <div class="wire-head">
+      <h2>MCP traffic</h2>
+      <span class="wire-note">JSON-RPC 2.0 over Streamable HTTP · POST /mcp</span>
+    </div>
+    <ol id="log" class="log"></ol>
+  </section>
+</main>
+
+<footer class="foot">
+  <p><strong>What's real:</strong> every reply's words, verdicts and actions come from the Aegis MCP server shown on the right.
+  <strong>What's simulated:</strong> Alexa+ itself. This page picks which tool to call with a simple phrase matcher, where Alexa+ would use its own language model,
+  and your browser's voice reads the server's spoken text. Voicemails are scripted examples; blocks and reports are practice runs.</p>
+</footer>
+</body>
+</html>

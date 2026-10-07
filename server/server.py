@@ -36,6 +36,7 @@ from aegis.telemetry import METRICS_LOGGER
 from server.ecosystem.pipeline import EcosystemPipeline
 from server.observability import finish_tool, observe_transition, stream_outcome, tool_span
 from server.ecosystem.routes import ecosystem_routes
+from server.simulator import same_origins, simulator_routes
 from server.schemas import TOOL_DEFINITIONS, TOOL_NAMES, VOICEMAIL_ID_PATTERN, ToolName
 from server.tools import TIMEOUT_SAY, UNAVAILABLE_SAY, AegisTools, ToolFailure
 from server.validation import InputError
@@ -173,12 +174,16 @@ def _log_call(
     logger.info(json.dumps(record, default=str))
 
 
-def transport_security(extra_hosts: Sequence[str]) -> TransportSecuritySettings:
-    """Allow local hosts plus configured tunnel hosts; allow no browser origins (docs/architecture.md §3.3)."""
+def transport_security(extra_hosts: Sequence[str], origins: Sequence[str] = ()) -> TransportSecuritySettings:
+    """Allow local hosts plus configured tunnel hosts (docs/architecture.md §3.3).
+
+    The only browser origins allowed are `origins`: the server's own, so its simulator page can call /mcp.
+    Every other page's Origin gets 403.
+    """
     return TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
         allowed_hosts=[*LOCAL_HOSTS, *extra_hosts],
-        allowed_origins=[],
+        allowed_origins=list(origins),
     )
 
 
@@ -323,18 +328,22 @@ def build_app(
     stateless: bool = True,
     host: str = "127.0.0.1",
     allowed_hosts: Sequence[str] = (),
+    allowed_origins: Sequence[str] = (),
+    simulator: bool = True,
     store: VoicemailStore | None = None,
     ledger: ActionLedger | None = None,
     webhook_secret: str | None = None,
     display_token: str | None = None,
     pipeline: EcosystemPipeline | None = None,
 ) -> Starlette:
-    """Build the ASGI app. The ecosystem endpoints are mounted only when both secrets are given."""
-    extra_routes = (
-        ecosystem_routes(pipeline or EcosystemPipeline(), webhook_secret, display_token)
-        if webhook_secret and display_token
-        else None
-    )
+    """Build the ASGI app. The ecosystem endpoints are mounted only when both secrets are given.
+
+    `allowed_origins` should be the server's own origins (`server.simulator.same_origins`) when the
+    simulator page is served, or the page's calls to /mcp are refused.
+    """
+    extra_routes = simulator_routes() if simulator else []
+    if webhook_secret and display_token:
+        extra_routes += ecosystem_routes(pipeline or EcosystemPipeline(), webhook_secret, display_token)
     tools = AegisTools(
         store=store if store is not None else VoicemailStore.from_directory(DEFAULT_FIXTURE_DIR),
         ledger=ledger if ledger is not None else ActionLedger(observer=observe_transition),
@@ -344,9 +353,9 @@ def build_app(
         json_response=True,
         stateless_http=stateless,
         max_request_body_size=MAX_REQUEST_BODY_BYTES,
-        transport_security=transport_security(allowed_hosts),
+        transport_security=transport_security(allowed_hosts, allowed_origins),
         host=host,
-        custom_starlette_routes=extra_routes,
+        custom_starlette_routes=extra_routes or None,
     )
     app.add_middleware(RequestGuard, stateless=stateless)
     return app
@@ -419,6 +428,12 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Serve without MCP sessions (default: on).",
     )
     parser.add_argument(
+        "--simulator",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Serve the web voice simulator at /simulator, an MCP client page for demos (default: on).",
+    )
+    parser.add_argument(
         "--allow-remote-bind",
         action="store_true",
         default=os.environ.get("AEGIS_ALLOW_REMOTE_BIND") == "1",
@@ -468,6 +483,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             stateless=args.stateless,
             host=args.host,
             allowed_hosts=tunnel_hosts,
+            allowed_origins=same_origins(args.port, tunnel_hosts) if args.simulator else (),
+            simulator=args.simulator,
             store=store,
             ledger=ActionLedger(ttl_seconds=ttl, observer=observe_transition),
             webhook_secret=webhook_secret,
@@ -489,6 +506,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         len(store),
         ttl,
     )
+    if args.simulator:
+        logger.info("voice simulator on http://127.0.0.1:%s/simulator", args.port)
     try:
         uvicorn.run(
             app,
