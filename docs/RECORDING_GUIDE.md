@@ -1,23 +1,25 @@
 # Recording guide: the 2:45 Alexa+ pitch, step by step
 
-This maps every line of [`PITCH_SCRIPT.md`](PITCH_SCRIPT.md) to what you do, what you say and what should be on screen. **Prerequisite:** Aegis is deployed to the development stage and answers in the Alexa+ simulator ([`ALEXA_DEPLOY.md`](ALEXA_DEPLOY.md)).
+This maps every line of [`PITCH_SCRIPT.md`](PITCH_SCRIPT.md) to what you do, what you say and what should be on screen. The demo runs in the **Aegis Voice Simulator**, our web MCP client. Alexa+'s own developer tools are preview-only, and the hackathon FAQ names this as the way to demo.
 
 ## 0. Before each take (about 2 minutes)
 
 ```
-┌──────────────────────────────────┬───────────────────────────────┐
-│ BROWSER: Alexa+ web simulator    │ TERMINAL: live Aegis tool log │
-│ Add-on: Aegis · Mode: Isolation  │ (big font: ⌘+ ×3)             │
-│ Stage: development               │                               │
-└──────────────────────────────────┴───────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│ SAFARI (or Chrome), full screen: http://127.0.0.1:8766         │
+│ ┌────────────────────────────┬───────────────────────────────┐ │
+│ │ Conversation + microphone  │ MCP traffic (live JSON-RPC)   │ │
+│ └────────────────────────────┴───────────────────────────────┘ │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 | Step | Do this | You should see |
 |---|---|---|
-| **Reset Aegis** | `cd ~/Downloads/Aegis && scripts/demo_down.sh && scripts/demo_up.sh` | **AEGIS READY FOR ALEXA+**. The cloudflared tunnel can stay running in its own terminal. |
-| **Start the log view** | `cd ~/Downloads/Aegis && clear && tail -n 0 -f logs/aegis-server.log \| grep --line-buffered '"event": "tools/call"'` | Nothing yet; one line per tool call during the demo |
-| **Simulator** | Open <https://developer.amazon.com/alexa/console/ask/addons/simulator>, click **New Chat**, then set Add-on: Aegis · Mode: *Isolation* · Stage: *development* | An empty conversation |
-| **QuickTime** | File → New Screen Recording → Options → Microphone → record the entire screen | |
+| **Reset Aegis** | `cd ~/Downloads/Aegis && scripts/demo_down.sh && scripts/demo_up.sh` | **AEGIS READY** |
+| **Open the simulator** | Go to <http://127.0.0.1:8766>, or reload the tab if it's already open. Press ⌘+ once or twice so the text reads well on video. | *Connected to Aegis 0.1.0 · MCP 2025-11-25 · 5 tools* |
+| **Check the microphone** | Click 🎤 once and allow the microphone if the browser asks. Then click **New conversation** so the test doesn't show. | The light bar pulses while listening |
+| **Sound** | Leave **Read replies aloud** ticked, turn the Mac's volume up, and record system audio, so viewers hear the replies. | |
+| **QuickTime** | File → New Screen Recording → Options → Microphone → record the entire screen. QuickTime doesn't capture system audio by itself; if the replies don't come through, use a tool that does (for example OBS) or add the voice in editing. | |
 
 > **Reset before every take.** Each take blocks the IRS number. A second run would answer *"already blocked"*.
 
@@ -50,42 +52,42 @@ This maps every line of [`PITCH_SCRIPT.md`](PITCH_SCRIPT.md) to what you do, wha
 | | |
 |---|---|
 | **ACTION** | `open "https://github.com/utlityapps/aegis-mcp#system-topology"` |
-| **SCRIPT** | *"Alexa+ handles the conversation. Aegis's fixed rules decide the risk."* |
-| **VISUAL** | The topology diagram: Alexa+ → tunnel → Aegis server → engine |
+| **SCRIPT** | *"The client handles the conversation. Aegis's fixed rules decide the risk."* |
+| **VISUAL** | The topology diagram: voice simulator (and, dotted, Alexa+) → Aegis server → engine |
 
-## 4. Working demo on Alexa+ (1:15–2:15)
+## 4. Working demo in the voice simulator (1:15–2:15)
 
-Switch to the simulator (left) and the log terminal (right).
-
-| | |
-|---|---|
-| **ACTION** | Show the simulator with **Aegis** selected |
-| **SCRIPT** | *"This is Alexa+, calling our server live."* |
-| **VISUAL** | The simulator header shows Aegis · Isolation · development |
+Switch to the simulator. Keep both panels in view: the conversation on the left, the MCP traffic on the right.
 
 | | |
 |---|---|
-| **TYPE IN "ASK ALEXA"** (or say it to the Echo) | `Ask Aegis to check the voicemail I just got from the IRS` |
-| **SCRIPT** | Nothing; let Alexa's reply play or show. |
-| **VISUAL** | Alexa says it looks like a scam, because of the gift-card demand, and offers to block or report. Log: `"tool": "check_voicemail" … "status": "checked"`. Caption: *Verdict from 12 fixed rules.* |
+| **ACTION** | Show the simulator, with the top bar reading *Connected* |
+| **SCRIPT** | *"This is a real MCP client, standing in for Alexa+, calling our server live."* |
+| **VISUAL** | Caption (in editing): *Live: web MCP client → Aegis MCP server. Alexa+ developer tools are preview-only.* |
 
 | | |
 |---|---|
-| **TYPE** | `Why does it look like a scam?` |
+| **SAY** (click 🎤 first; or click the phrase under **Try saying**) | *"Check the voicemail I just got from the IRS."* |
+| **SCRIPT** | Nothing; let the reply play. |
+| **VISUAL** | A red **SCAM · risk 100/100** label, then *"This message looks like a scam. The caller wants payment by gift card…"*. Traffic: `tools/call · check_voicemail`. Caption: *Verdict from 12 fixed rules.* |
+
+| | |
+|---|---|
+| **SAY** | *"Why does it look like a scam?"* |
 | **SCRIPT** | *"Every warning sign comes in words a grandparent can act on."* |
-| **VISUAL** | Warning signs: gift cards, threat of arrest, government impersonation. Log: `"tool": "explain_red_flags"` |
+| **VISUAL** | Warning signs: gift cards, threat of arrest, government impersonation. Traffic: `tools/call · explain_red_flags` |
 
 | | |
 |---|---|
-| **TYPE** | `Block them` |
-| **SCRIPT** | Nothing; let the read-back show. |
-| **VISUAL** | *"I can block calls from 2 0 2, 5 5 5, 0 1 4 7… Should I go ahead?"* Log: `"tool": "block_number", "mode": "stage", "status": "staged"`. Caption: *Staged, not done.* |
+| **SAY** | *"Block them."* |
+| **SCRIPT** | Nothing; let the read-back play. |
+| **VISUAL** | *"I can block calls from 2 0 2, 5 5 5, 0 1 4 7… Should I go ahead?"* Traffic: `block_number`; open the response and point out `"status": "staged"` and the `approval_token`. Caption: *Staged, not done. A single-use approval code, never spoken.* |
 
 | | |
 |---|---|
-| **TYPE** | `Yes` |
-| **SCRIPT** | Once the reply shows: *"Nothing happens until she says yes. And Aegis tells her when it's only practice."* |
-| **VISUAL** | *"Done… This is a practice version of Aegis, so no real block was made."* Log: `"mode": "resolve", "status": "executed"` |
+| **SAY** | *"Yes."* |
+| **SCRIPT** | Once the reply plays: *"Nothing happens until she says yes. And Aegis tells her when it's only practice."* |
+| **VISUAL** | *"Done… This is a practice version of Aegis, so no real block was made."* Traffic: the request carries `"decision": "approve"`; the response shows `"status": "executed"` and `"simulated": true` |
 
 ## 5. Developer feedback and close (2:15–2:45)
 
@@ -107,8 +109,9 @@ Switch to the simulator (left) and the log terminal (right).
 
 | Symptom | Fix |
 |---|---|
-| Alexa answers itself instead of calling Aegis | Mode must be **Isolation**, and the Add-on menu must show **Aegis** |
-| Nothing appears in the log terminal | The tunnel is down or its URL changed. Restart cloudflared, re-run `scripts/render_addon.py`, then `alexa-ai deploy` |
-| *"already blocked"* | Reset (step 0) and click **New Chat** |
-| Alexa's wording differs from the script | Expected: Alexa+ composes its own wording. Caption what it actually says. |
+| Top bar says *Can't reach the Aegis server* | Run `scripts/demo_up.sh`, then press **Reconnect** |
+| 🎤 is greyed out, or nothing happens when you speak | The browser can't do speech input. Use Safari or Chrome, allow the microphone, or click the **Try saying** phrases instead |
+| No sound | Tick **Read replies aloud** and check the Mac's volume |
+| A reply is tagged *Simulator* instead of *Alexa (Aegis)* | The phrase matcher didn't recognise what it heard. Say the scripted line again, or click it under **Try saying** |
+| *"already blocked"* | Reset (step 0) and reload the page |
 | GitHub pages show old content | Push first; the README and feedback doc must be on `main` |

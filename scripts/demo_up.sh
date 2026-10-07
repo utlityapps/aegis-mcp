@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start Aegis for the Alexa+ demo: server in the background, health checks, then the tunnel/deploy next steps.
+# Start Aegis for the demo: server in the background, health checks, then the voice simulator's address.
 #
 #   scripts/demo_up.sh            # port 8766 by default (AEGIS_PORT overrides)
 #   scripts/demo_down.sh          # stop it
@@ -68,6 +68,8 @@ tools="$(rpc '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | "$PY" -c 'import
 verdict="$(rpc '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"check_voicemail","arguments":{"caller_hint":"IRS"}}}' \
   | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["result"]["structuredContent"]["verdict"])')"
 [[ "$verdict" == "SCAM" ]] && ok "check_voicemail(\"IRS\") → SCAM (read-only, no state changed)" || fail "demo voicemail check returned $verdict"
+curl -s --max-time 3 "$BASE/simulator" | grep -q 'Aegis Voice Simulator' \
+  && ok "voice simulator page served at $BASE/simulator" || fail "voice simulator page not served"
 
 # --- 4. telemetry --------------------------------------------------------------------------------
 sleep 0.5  # let the background log thread flush
@@ -87,16 +89,11 @@ ok "Telemetry live: $emf_lines EMF metric lines in logs/aegis-metrics.log, all v
 cat <<BANNER
 
   ╔══════════════════════════════════════════════════════════════════════╗
-  ║                       AEGIS READY FOR ALEXA+                          ║
+  ║                             AEGIS READY                               ║
   ╚══════════════════════════════════════════════════════════════════════╝
     Server      pid $(cat "$PID_FILE" 2>/dev/null || echo "$running_pid") · $BASE/mcp (stateless Streamable HTTP)
+    Simulator   http://127.0.0.1:$PORT  (web MCP client: open it in Safari or Chrome)
     Telemetry   logs/aegis-metrics.log (EMF) · logs/aegis-server.log (redacted)
-
-  Next (see docs/ALEXA_DEPLOY.md):
-    1. Tunnel:   cloudflared tunnel --url http://127.0.0.1:$PORT --http-host-header 127.0.0.1:$PORT
-    2. Manifest: .venv/bin/python scripts/render_addon.py --mcp-url https://<tunnel-host>/mcp
-    3. Deploy:   cd addon-package && alexa-ai deploy
-    4. Test:     https://developer.amazon.com/alexa/console/ask/addons/simulator  (Mode: Isolation)
 
   Recording: docs/RECORDING_GUIDE.md · Between takes: scripts/demo_down.sh && scripts/demo_up.sh
 BANNER

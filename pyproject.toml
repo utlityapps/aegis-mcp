@@ -6,7 +6,7 @@
 # depends on, and the product agreements the build must honor.
 #
 # Build status as of 2026-10-03 (verified on Python 3.12.15, mcp 2.2.0):
-#   - tests/: 324/324 pass (engine, handlers, hardening, stress, resilience, ecosystem, telemetry/security)
+#   - tests/: 336/336 pass (engine, handlers, hardening, stress, resilience, ecosystem, telemetry/security, simulator)
 #   - server/: 23/23 smoke checks pass (server/smoke_test.py), incl. the Ring -> Bee -> Fire TV chain
 # =============================================================================
 
@@ -35,7 +35,7 @@ classifiers = [
 ]
 
 # Only the MCP server needs third-party packages. The analysis engine
-# (aegis/engine.py) and the demo server (demo/server.py) are stdlib-only
+# (aegis/engine.py), aegis/security and aegis/telemetry are stdlib-only
 # by design — the no-network guarantee is enforced by the test suite.
 dependencies = [
     "mcp==2.2.0",        # Official MCP Python SDK — self-hosted server, Streamable HTTP transport
@@ -47,7 +47,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest",      # test runner: `pytest tests/ -q` (324 tests)
+    "pytest",      # test runner: `pytest tests/ -q` (336 tests)
     "opentelemetry-sdk==1.45.0",  # tests record spans with the in-memory exporter
 ]
 
@@ -151,5 +151,5 @@ video = "public, English, under 3 minutes, YouTube or Vimeo"
 submission_fields = ["repo link", "video link", "text description", "product feedback", "track selection (Alexa+)"]
 mini_challenges = []          # decided 2026-10-05: Alexa+ track only; AWS Builder and Open Source skipped
 mcp_spec_minimum = "2025-11-25"  # hackathon rule; server also accepts 2025-03-26 (documented Alexa+ handshake)
-video_must_show = "Alexa+ calling the server (web simulator or Echo)"  # see docs/ALEXA_DEPLOY.md
+video_must_show = "the server working through a real MCP client: our web voice simulator at /simulator"  # hackathon FAQ: Alexa+ dev tools are preview-only, a web MCP client page qualifies
 friction_log = "optional, drafted, worth up to 10% judging bonus"

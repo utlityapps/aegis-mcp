@@ -8,7 +8,9 @@
 >
 > *"This message looks like a scam. The caller wants payment by gift card, wire transfer or cryptocurrency. Real agencies never ask for that. Would you like me to block this number or report it?"*
 
-Aegis is a self-hosted [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that Alexa+ calls over Streamable HTTP. A deterministic engine checks each voicemail and returns a verdict (SCAM, SUSPICIOUS or LEGITIMATE) with plain spoken reasons. If the person asks, Aegis can block the caller or report the call, but only after a read-back and an explicit "yes".
+Aegis is a self-hosted [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server built for Alexa+ to call over Streamable HTTP. A deterministic engine checks each voicemail and returns a verdict (SCAM, SUSPICIOUS or LEGITIMATE) with plain spoken reasons. If the person asks, Aegis can block the caller or report the call, but only after a read-back and an explicit "yes".
+
+**Try it in two commands.** Amazon's Alexa+ add-on tools are in preview for select partners only, so hackathon entrants can't connect a server to a real Alexa+ device. Aegis therefore ships the **Aegis Voice Simulator**: a web page served by the server itself that is a real MCP client. It sends `initialize`, `tools/list` and `tools/call` over Streamable HTTP, exactly as Alexa+ would, and you talk to it by voice or text. See [Quickstart](#quickstart).
 
 
 ---
@@ -22,8 +24,9 @@ Aegis is a self-hosted [Model Context Protocol](https://modelcontextprotocol.io)
 | **Mini challenges** | None entered |
 | **Deadline** | 2026-10-23, 12:00 PT |
 | **Pitch video** | 2:45 pitch: [`docs/PITCH_SCRIPT.md`](docs/PITCH_SCRIPT.md). Recording steps: [`docs/RECORDING_GUIDE.md`](docs/RECORDING_GUIDE.md) |
-| **Demo** | One sentence to Alexa+, no typing: *"Alexa, ask Aegis to check the voicemail I just got from the IRS."* Then why it's a scam, a read-back, and a "yes"-gated block. |
-| **Run it on Alexa+** | Deploy and test in the Alexa web simulator: [`docs/ALEXA_DEPLOY.md`](docs/ALEXA_DEPLOY.md) |
+| **Demo** | One spoken sentence: *"Check the voicemail I just got from the IRS."* Then why it's a scam, a read-back, and a "yes"-gated block, in the Aegis Voice Simulator with the live MCP traffic beside it. |
+| **Try it** | `pip install -e ".[dev]"`, then `aegis-server` and open <http://127.0.0.1:8000>. No accounts, keys or hosting needed. |
+| **Alexa+ access** | The Alexa+ MCP Toolkit, CLI and web simulator are preview-only (hackathon FAQ), so the demo uses our own web MCP client, the path the FAQ describes. The add-on kit for a real deploy is ready in [`docs/ALEXA_DEPLOY.md`](docs/ALEXA_DEPLOY.md) for when access opens. |
 | **Product feedback** | [`AMAZON_DEVELOPER_FEEDBACK.md`](AMAZON_DEVELOPER_FEEDBACK.md): the 5-question framework for every tool used (Alexa+ MCP Toolkit, MCP Python SDK, Builder Tools MCP). Evidence: [`docs/developer_feedback.md`](docs/developer_feedback.md) |
 | **Devpost text** | [`docs/DEVPOST_DESCRIPTION.md`](docs/DEVPOST_DESCRIPTION.md) |
 
@@ -31,8 +34,9 @@ Aegis is a self-hosted [Model Context Protocol](https://modelcontextprotocol.io)
 
 | | Tool | What Aegis uses it for | Status |
 |---|---|---|---|
-| ⭐ **Track tool** | **Alexa+ MCP server over Streamable HTTP** (Alexa+ MCP Toolkit) | Five voice tools: check, explain, list, block and report voicemails. Stateless JSON-RPC over Streamable HTTP, MCP 2025-11-25 (2025-03-26 also accepted), with a propose → approve → execute gate. | Built and tested (324 tests, 23 HTTP smoke checks). Add-on manifest, icons, and privacy and terms pages ready for `alexa-ai deploy`. |
-| | Alexa AI CLI and web simulator | Deploying to the development stage and testing end to end | See [`docs/ALEXA_DEPLOY.md`](docs/ALEXA_DEPLOY.md) |
+| ⭐ **Track tool** | **Alexa+ MCP server over Streamable HTTP** (Alexa+ MCP Toolkit) | Five voice tools: check, explain, list, block and report voicemails. Stateless JSON-RPC over Streamable HTTP, MCP 2025-11-25 (2025-03-26 also accepted), with a propose → approve → execute gate. | Built and tested (336 tests, 23 HTTP smoke checks). Add-on manifest, icons, and privacy and terms pages ready for when Alexa+ preview access opens. |
+| | **Aegis Voice Simulator** (web MCP client) | Demoing and testing end to end: speech in and out in the browser, and every JSON-RPC message shown live | Built and tested, served at `/simulator` |
+| | Alexa AI CLI and Alexa+ web simulator | Deploying to the development stage | Not available to hackathon entrants (preview, select partners). Kit ready: [`docs/ALEXA_DEPLOY.md`](docs/ALEXA_DEPLOY.md) |
 | | MCP Python SDK `2.2.0` | The protocol implementation under the server | In use, hardened (see [Security notes](#security-notes)) |
 | Dev tools | Amazon Devices Builder Tools MCP | Reading Amazon's docs from inside our coding agent | Used throughout the build |
 | Runtime | Python 3.12, uvicorn, Starlette, jsonschema, OpenTelemetry API | Server, validation, tracing | Pinned in `pyproject.toml` |
@@ -47,6 +51,7 @@ Aegis is a self-hosted [Model Context Protocol](https://modelcontextprotocol.io)
 - **Voicemails are 8 scripted text fixtures** (5 scam, 3 legitimate), not audio.
 - **English only.** Caller metadata is trusted.
 - **Pending approvals live in memory** and vanish on restart.
+- **The demo client isn't Alexa+.** The voice simulator picks a tool with a simple phrase matcher where Alexa+ would use its language model, and reads Aegis's `say` text in the browser's voice. Everything it says comes from the server.
 - **No authentication** on the endpoint. This is a recorded hackathon decision; see [Security notes](#security-notes).
 
 ---
@@ -55,13 +60,15 @@ Aegis is a self-hosted [Model Context Protocol](https://modelcontextprotocol.io)
 
 ```mermaid
 flowchart LR
-    person(["👵 Person"]) -- "voice" --> alexa["Alexa+<br/>(MCP client)"]
+    person(["👵 Person"]) -- "voice" --> sim["Aegis Voice Simulator<br/>(web MCP client, in the browser)"]
+    person -. "voice" .-> alexa["Alexa+<br/>(MCP client, preview access only)"]
 
     subgraph edge["Public edge"]
         tunnel["Cloudflare Tunnel<br/>HTTPS → 127.0.0.1:8000"]
     end
 
-    alexa -- "Streamable HTTP<br/>POST /mcp · JSON-RPC 2.0" --> tunnel
+    sim -- "Streamable HTTP<br/>POST /mcp · JSON-RPC 2.0" --> guard
+    alexa -. "Streamable HTTP<br/>POST /mcp · JSON-RPC 2.0" .-> tunnel
 
     subgraph host["Your machine / EC2 — aegis-server (mcp==2.2.0)"]
         direction TB
@@ -82,7 +89,8 @@ flowchart LR
 ```
 
 **How to read it:**
-- **Alexa+ is the client.** It handles speech and conversation, and reaches the server over HTTPS through a Cloudflare tunnel.
+- **The demo client is the Aegis Voice Simulator.** It runs in the browser, is served by the server itself, and speaks the same MCP that Alexa+ does.
+- **Alexa+ is the intended client** (dotted lines). It would handle speech and conversation, and reach the server over HTTPS through a Cloudflare tunnel. Connecting it needs preview access that hackathon entrants can't get.
 - **Aegis decides the risk.** Every verdict comes from the deterministic engine; no language model judges a voicemail.
 
 ### The demo, step by step
@@ -90,7 +98,7 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     actor P as Person
-    participant A as Alexa+
+    participant A as Alexa+ (or the voice simulator)
     participant S as Aegis MCP server
     participant E as Engine + fixtures
 
@@ -132,7 +140,8 @@ The repo also contains a **simulator-only** ambient pipeline: a doorbell event p
 
 ### Prerequisites
 - **Python 3.12 or later.** The code uses 3.12 syntax. macOS's system `python3` is often 3.9 and won't work. Install 3.12 from [python.org](https://www.python.org/downloads/), with Homebrew (`brew install python@3.12`), or with [uv](https://docs.astral.sh/uv/) (`uv python install 3.12`).
-- **[cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)**, only to reach the server from Alexa+.
+- **A browser** for the voice simulator. Speech input works in Chrome, Edge and Safari; you can always type instead.
+- *Optional:* **[cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)**, only to reach the server from outside your machine.
 
 ### 1. Install
 
@@ -149,7 +158,7 @@ This installs the pinned runtime dependencies (`mcp==2.2.0`, `uvicorn==0.54.0`, 
 ### 2. Run the tests
 
 ```bash
-pytest tests/ -q                 # 324 tests: engine, handlers, hardening, stress, resilience, ecosystem, telemetry/security
+pytest tests/ -q                 # 336 tests: engine, handlers, hardening, stress, resilience, ecosystem, telemetry/security
 python server/smoke_test.py      # 23 end-to-end checks over real HTTP (starts its own server)
 ```
 
@@ -162,6 +171,7 @@ python server/smoke_test.py      # 23 end-to-end checks over real HTTP (starts i
 | `tests/test_ecosystem.py` | Ring/wearable/card schemas, HMAC signing and replay, the visit state machine, consent and no-transcript rules, SSE delivery, the end-to-end chain under 200 ms |
 | `tests/test_telemetry_security.py` | EMF format and dimension allowlist, metrics per tool/stream/transition, OpenTelemetry spans, log redaction and stdout/stderr routing, sanitizer and injection screening |
 | `tests/test_alexa_addon.py` | The add-on manifest meets every QuickStart constraint; assets exist at their declared sizes; the privacy and terms URLs resolve; the privacy policy matches the code |
+| `tests/test_simulator.py` | Voice simulator: strict headers, only its own origin may call `/mcp`, the phrase matcher, and the full demo conversation against a live server at both protocol versions (needs `node`) |
 | `tests/test_display.py` | Experimental TV display page: strict headers, text-only rendering |
 | `tests/test_stress.py` | Invalid JSON-RPC ids, non-object arguments, half-closed connections, spelled-out acronyms, schema-limit data |
 | `server/smoke_test.py` | Handshake at `2025-03-26` and `2025-11-25`, the demo flow, error contracts, 405/413/403/400/202 transport behavior |
@@ -171,6 +181,7 @@ python server/smoke_test.py      # 23 end-to-end checks over real HTTP (starts i
 ```bash
 aegis-server                     # or: python -m server
 # → Aegis MCP server on http://127.0.0.1:8000/mcp (stateless=True, voicemails=8, approval_ttl=600s)
+# → voice simulator on http://127.0.0.1:8000/simulator
 ```
 
 | Flag / env var | Default | Purpose |
@@ -178,6 +189,7 @@ aegis-server                     # or: python -m server
 | `--host` / `AEGIS_HOST` | `127.0.0.1` | Bind address. A non-loopback address is **refused** unless `--allow-remote-bind` is set. |
 | `--port` / `AEGIS_PORT` | `8000` | Port |
 | `--stateless` / `--no-stateless` | stateless | Serve without MCP sessions |
+| `--simulator` / `--no-simulator` | on | Serve the voice simulator page and allow its own origin to call `/mcp` |
 | `--allow-remote-bind` / `AEGIS_ALLOW_REMOTE_BIND=1` | off | Permit a public bind; only behind a trusted proxy |
 | `AEGIS_ALLOWED_HOSTS` | *(none)* | Extra `Host` header values to accept, comma-separated (e.g. your tunnel hostname) |
 | `AEGIS_APPROVAL_TTL_SECONDS` | `600` | How long a staged action waits for a yes (60–3600) |
@@ -192,9 +204,19 @@ curl -s http://127.0.0.1:8000/mcp \
        "params":{"name":"check_voicemail","arguments":{"caller_hint":"IRS"}}}'
 ```
 
-### 4. Expose it to Alexa+ with a Cloudflare tunnel
+### 4. Talk to it in the voice simulator
 
-Alexa+ needs a public HTTPS URL. A quick tunnel forwards one to your local server without opening any ports:
+Open <http://127.0.0.1:8000> in a browser. The top bar should read *Connected to Aegis 0.1.0 · MCP 2025-11-25 · 5 tools*.
+
+1. Click 🎤 and say *"Check the voicemail I just got from the IRS"*, or click that phrase under **Try saying**. You'll hear: *"This message looks like a scam…"*
+2. Then *"Why does it look like a scam?"*, *"Block them"* and *"Yes"*.
+3. Watch the **MCP traffic** panel: each turn is one `tools/call` request and its response. The approval token goes back to the server but is never shown in the chat or spoken.
+
+Switch **Protocol** to `2025-03-26` to reconnect with the handshake version in Amazon's Alexa+ sample. **New conversation** clears the page's memory. Restart the server to clear Aegis's state, since a blocked number stays blocked until then.
+
+### 5. Optional: expose it with a Cloudflare tunnel
+
+Alexa+, or anyone outside your machine, needs a public HTTPS URL. A quick tunnel forwards one to your local server without opening any ports:
 
 ```bash
 cloudflared tunnel --url http://127.0.0.1:8000 --http-host-header 127.0.0.1:8000
@@ -222,11 +244,11 @@ curl -s https://<random-words>.trycloudflare.com/mcp \
 
 A quick-tunnel URL changes every time cloudflared starts. For a stable URL, set up a [named tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/get-started/) on your own domain.
 
-> The server-side half of this was tested: a foreign `Host` is refused with 421, and `AEGIS_ALLOWED_HOSTS` admits it. `cloudflared` itself wasn't available in the build environment, so verify the tunnel step on your machine.
+> Tested end to end on 2026-10-05 through a quick tunnel: both handshake versions, all 5 tools, a median round trip of about 52 ms, and a foreign `Origin` refused with 403.
 
-### 5. Connect it to Alexa+
+### 6. Connect it to Alexa+ (needs preview access)
 
-The full walkthrough (access check, CLI setup, tunnel, manifest, deploy, simulator test) is in [`docs/ALEXA_DEPLOY.md`](docs/ALEXA_DEPLOY.md). In short:
+Hackathon entrants can't do this step: the Alexa AI CLI and Amazon's web simulator are in preview for select partners. The kit is ready for when access opens. The full walkthrough (access check, CLI setup, tunnel, manifest, deploy, simulator test) is in [`docs/ALEXA_DEPLOY.md`](docs/ALEXA_DEPLOY.md). In short:
 
 ```bash
 scripts/demo_up.sh                                   # server on :8766 plus read-only health checks
@@ -256,6 +278,7 @@ server/                 MCP server (the only place third-party packages are allo
   speech.py             senior-friendly say text
   smoke_test.py         end-to-end HTTP checks
   observability.py      OpenTelemetry spans + EMF metric names
+  simulator/            Aegis Voice Simulator: the web MCP client page served at /simulator
   ecosystem/            experimental, off by default: simulated doorbell -> TV alert pipeline
 alexa/                  Alexa+ add-on kit: addon.template.json, icons and carousel image
 infrastructure/         IAM policy designs for an AWS deployment (not deployed)
@@ -263,7 +286,7 @@ scripts/
   demo_up.sh / demo_down.sh     start or stop the server with read-only health checks
   render_addon.py               fill in and validate addon.json for `alexa-ai deploy`
   make_alexa_assets.py          regenerate the add-on icons and carousel image
-  demo_voice_flow.py            fallback stand-in client (only if Alexa+ access is blocked)
+  demo_voice_flow.py            terminal stand-in client for rehearsals (the voice simulator replaces it)
   simulate_ecosystem_event.py   experimental doorbell -> TV pipeline simulator
 fixtures/voicemails/    8 scripted voicemails (5 scam, 3 legitimate)
 tests/                  pytest suites
@@ -272,7 +295,7 @@ docs/
   aws_bedrock_integration.md    Strands + Bedrock, DynamoDB state, EC2 behind an ALB (design)
   developer_feedback.md         feedback evidence per tool (doc quotes, reproductions)
   ecosystem.md                  experimental ambient pipeline (not part of the submission)
-  ALEXA_DEPLOY.md               deploy to Alexa+ (development stage) and test in the web simulator
+  ALEXA_DEPLOY.md               deploy to Alexa+ once preview access is granted (not available to entrants)
   PITCH_SCRIPT.md               2:45 pitch video script
   RECORDING_GUIDE.md            step-by-step recording walkthrough for the pitch
   DEVPOST_DESCRIPTION.md        project text for the Devpost submission form
@@ -289,7 +312,7 @@ Every request crosses the same boundaries in the same order. Telemetry is emitte
 
 ```mermaid
 flowchart TB
-    client["Alexa+<br/>(MCP client)"]
+    client["MCP client<br/>(voice simulator or Alexa+)"]
 
     subgraph boundary["Zero-trust boundary"]
         direction TB
@@ -345,7 +368,7 @@ flowchart TB
 - **No authentication.** Anyone with the tunnel URL can call the tools. That's acceptable only because every action is simulated and the data is fixture-only. Real blocking or reporting needs OAuth 2.1 account linking first, the only auth Alexa+ supports.
 - **Built-in protections:**
   - loopback-only bind by default;
-  - Host and Origin checks;
+  - Host and Origin checks (the only browser origin allowed is the server's own simulator page);
   - a 64 KiB body cap, a 5 s body-read deadline and a 3 s limit per tool call;
   - a cap of 128 concurrent connections;
   - single-use, hashed approval tokens with an expiry;

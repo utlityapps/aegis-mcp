@@ -10,6 +10,7 @@ Aegis is a voice-native voicemail scam-defense companion for seniors on Alexa+: 
 - Engine tests: `pytest tests/ -q`
 - MCP smoke checks: `python server/smoke_test.py` (run from repo root)
 - Run server: `aegis-server` or `python -m server` → `http://127.0.0.1:8000/mcp` (`--host`/`AEGIS_HOST`, `--port`/`AEGIS_PORT`, `--stateless`/`--no-stateless`, stateless by default)
+  - Voice simulator (the hackathon demo client, since Alexa+ dev tools are preview-only): `server/simulator/`, served at `/` → `/simulator`; `--no-simulator` turns it off. It's a real MCP client in the browser. Only the server's own origins (`same_origins`) may call `/mcp`; keep every other Origin refused. Its phrase matcher only picks a tool; all words and verdicts come from the server.
   - Loopback only by default: a non-loopback `--host` is refused unless `--allow-remote-bind` (`AEGIS_ALLOW_REMOTE_BIND=1`). There is no auth, so expose it through a tunnel instead.
   - Tunnel hostnames must be listed in `AEGIS_ALLOWED_HOSTS` (comma-separated) or the Host check returns 421. `AEGIS_APPROVAL_TTL_SECONDS` sets approval expiry (60–3600, default 600).
   - `server.server.RequestGuard` buffers each POST body (5 s deadline, 64 KiB cap) before the SDK sees it; each tool call has a 3 s limit (`TOOL_TIMEOUT_SECONDS`); uvicorn caps concurrency at 128. Don't remove these — they're what stops stalled or flooding clients.
@@ -19,7 +20,7 @@ Aegis is a voice-native voicemail scam-defense companion for seniors on Alexa+: 
 ## Engine rules (`aegis/engine.py`)
 
 - Stdlib only, no network, no LLM. Verdicts come only from the fixed heuristics, never from a model. Tests enforce that the engine source imports no network modules — don't add any, even indirectly.
-- `demo/server.py` is also stdlib-only. Only `server/` may use third-party packages (`mcp`, `uvicorn`, `starlette`, `jsonschema`, all pinned).
+- Only `server/` may use third-party packages (`mcp`, `uvicorn`, `starlette`, `jsonschema`, all pinned).
 - Verdicts: `risk_score >= 60` → SCAM, `30–59` → SUSPICIOUS, else LEGITIMATE. Heuristics, weights and thresholds may be tuned as long as tests pass; keep `heuristics_count`/thresholds in `pyproject.toml` in sync.
 - Every heuristic must emit a plain, senior-friendly sentence meant to be read aloud by Alexa — not technical jargon.
 

@@ -20,7 +20,7 @@ Ask Alexa if a voicemail is a scam. Aegis explains why in plain words, and never
 
 Phone scams aimed at older adults are built for speed and secrecy: a fake "IRS agent" threatens arrest, demands gift cards, and says not to tell anyone. Aegis gives the person on the other end of that voicemail a second opinion in one sentence:
 
-> "Alexa, ask Aegis to check the voicemail I just got from the IRS."
+> "Check the voicemail I just got from the IRS."
 > *"This message looks like a scam. The caller wants payment by gift card, wire transfer or cryptocurrency. Real agencies never ask for that. Would you like me to block this number or report it?"*
 
 Aegis can:
@@ -41,15 +41,17 @@ Aegis can:
   - fixes for several failure modes we reproduced in the MCP SDK stack: silent hangs on bad request ids, lost responses on half-closed connections, and stalled bodies;
   - Unicode normalization against look-alike characters, screening for prompt injection in caller names, and PII-redacted logs;
   - CloudWatch-compatible metrics and OpenTelemetry spans.
-- **Tested:** 324 unit tests and 23 end-to-end HTTP smoke checks.
+- **A voice simulator that is a real MCP client.** Alexa+'s add-on developer tools are preview-only for select partners, so, as the hackathon FAQ describes, we demo through our own web page. The server serves it at `/simulator`. It sends `initialize`, `tools/list` and `tools/call` over Streamable HTTP like Alexa+ would, takes speech through the browser's microphone, reads Aegis's replies aloud, and shows every JSON-RPC message live beside the conversation. A small phrase matcher stands in for Alexa+'s language model when choosing a tool; every word, verdict and action comes from the server.
+- **Tested:** 336 tests, including the full demo conversation driven through the simulator's own client against a live server at both protocol versions, plus 23 end-to-end HTTP smoke checks.
 
 ## Honest limitations
 - **It's a practice version.** It checks 8 scripted sample voicemails (5 scams, 3 legitimate), and blocking and reporting are simulated. Alexa says *"no real block was made"* every time.
 - **English only.** Pending approvals live in memory.
+- **The demo client stands in for Alexa+.** The add-on kit (manifest, icons, privacy and terms pages) is ready, but deploying to Alexa+ needs preview access that hackathon entrants can't get.
 - **The server has no authentication.** This is acceptable only because every action is simulated.
 
 ## Built during the hackathon
-Everything in the repository was built during the hackathon window, from the protocol spec to the engine, the server, the tests, the add-on kit and the documentation. The git history starts within the window.
+Everything in the repository was built during the hackathon window, from the protocol spec to the engine, the server, the voice simulator, the tests, the add-on kit and the documentation. The git history starts within the window.
 
 ## Product feedback
 Our 5-question feedback for each tool used (the Alexa+ MCP Toolkit, the MCP Python SDK and the Amazon Devices Builder Tools MCP server) is in [`AMAZON_DEVELOPER_FEEDBACK.md`](../AMAZON_DEVELOPER_FEEDBACK.md). The headlines:
@@ -59,5 +61,5 @@ Our 5-question feedback for each tool used (the Alexa+ MCP Toolkit, the MCP Pyth
 
 ## Try it
 - **Repository:** <https://github.com/utlityapps/aegis-mcp> (MIT)
-- **Run locally:** `pip install -e ".[dev]"`, then `scripts/demo_up.sh` (see the README Quickstart)
-- **Deploy to Alexa+:** [`docs/ALEXA_DEPLOY.md`](ALEXA_DEPLOY.md)
+- **Run locally (about 2 minutes, no accounts or keys):** `pip install -e ".[dev]"`, then `aegis-server`, then open <http://127.0.0.1:8000> and say *"Check the voicemail I just got from the IRS."* Details in the README Quickstart.
+- **Deploy to Alexa+ (needs preview access):** [`docs/ALEXA_DEPLOY.md`](ALEXA_DEPLOY.md)

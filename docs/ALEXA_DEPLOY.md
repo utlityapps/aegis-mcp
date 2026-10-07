@@ -1,6 +1,8 @@
 # Deploying Aegis to Alexa+ (development stage) and testing it
 
-The hackathon rules ask for a video that *"shows the Project functioning on the device for which it was built"*. For Aegis that means **Alexa+ calling this server**, tested in the Alexa web simulator or on an Echo. This guide gets you there. It follows Amazon's [Set Up Your Development Environment](https://developer.amazon.com/en-US/docs/alexaplus/add-ons/set-up-your-development-environment.html), [Create an MCP Add-on](https://developer.amazon.com/en-US/docs/alexaplus/add-ons/mcp-toolkit-quickstart.html) and [Test in the Web Simulator](https://developer.amazon.com/en-US/docs/alexaplus/add-ons/test-with-web-simulator.html) pages.
+> **Status: needs Alexa+ preview access, which hackathon entrants can't get.** The Alexa+ MCP Toolkit, the Alexa AI CLI and Amazon's web simulator are in preview for select partners. Amazon support confirmed on 2026-10-07 that the `AccessDenied` in step 2 is expected until access is granted, and the hackathon FAQ says entrants should demo through their own web MCP client instead. For the hackathon demo, use the **Aegis Voice Simulator** (README → Quickstart). This guide stays for when access opens.
+
+The guide gets a partner account to **Alexa+ calling this server**, tested in the Alexa web simulator or on an Echo. It follows Amazon's [Set Up Your Development Environment](https://developer.amazon.com/en-US/docs/alexaplus/add-ons/set-up-your-development-environment.html), [Create an MCP Add-on](https://developer.amazon.com/en-US/docs/alexaplus/add-ons/mcp-toolkit-quickstart.html) and [Test in the Web Simulator](https://developer.amazon.com/en-US/docs/alexaplus/add-ons/test-with-web-simulator.html) pages.
 
 Steps 1–3 need **your** accounts; nobody can do them for you. Everything Aegis-specific (the manifest, icons, privacy and terms URLs, and the server) is ready in this repo.
 

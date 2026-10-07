@@ -1,6 +1,7 @@
-"""Presenter-paced stand-in for Alexa+ in the demo video: check -> block -> yes, against the running server.
+"""Presenter-paced terminal client for rehearsals: check -> block -> yes, against the running server.
 
-Use this only when the Alexa+ add-on isn't connected. It is labelled on screen as a simulated client.
+The demo video uses the web voice simulator (server/simulator/, at /simulator) instead; this stays as a
+quick terminal check.
 Press Enter after speaking each line; the reply printed is the server's real `say` text.
 
     python scripts/demo_voice_flow.py            # uses AEGIS_PORT (default 8000)
@@ -70,7 +71,7 @@ def main() -> int:
     pause = not args.no_pause
     mcp = Mcp(args.base_url.rstrip("/"))
 
-    print(f"\n  {BOLD}SIMULATED CLIENT{RESET} {DIM}· Alexa+ connection pending · replies are the live Aegis server's{RESET}")
+    print(f"\n  {BOLD}SIMULATED CLIENT{RESET} {DIM}· terminal rehearsal client · replies are the live Aegis server's{RESET}")
 
     say("YOU", "Alexa, ask Aegis to check the voicemail I just got from the IRS.", GREEN)
     wait(pause)
