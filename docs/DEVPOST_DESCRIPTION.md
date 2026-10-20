@@ -12,7 +12,7 @@ Ask Alexa if a voicemail is a scam. Aegis explains why in plain words, and never
 
 ## Track and mini challenges
 - **Track:** Alexa+ (self-hosted MCP server, Streamable HTTP, MCP spec 2025-11-25)
-- **Mini challenges:** none
+- **Mini challenges:** Open Source (this repository, created during the hackathon under the MIT license)
 
 ---
 
@@ -45,7 +45,7 @@ Aegis can:
 - **Tested:** 336 tests, including the full demo conversation driven through the simulator's own client against a live server at both protocol versions, plus 23 end-to-end HTTP smoke checks.
 
 ## Honest limitations
-- **It's a practice version.** It checks 8 scripted sample voicemails (5 scams, 3 legitimate), and blocking and reporting are simulated. Alexa says *"no real block was made"* every time.
+- **It's a practice version.** It checks 8 scripted sample voicemails (5 scams, 3 legitimate), and blocking and reporting are simulated. Aegis says *"no real block was made"* every time.
 - **English only.** Pending approvals live in memory.
 - **The demo client stands in for Alexa+.** The add-on kit (manifest, icons, privacy and terms pages) is ready, but deploying to Alexa+ needs preview access that hackathon entrants can't get.
 - **The server has no authentication.** This is acceptable only because every action is simulated.

@@ -21,9 +21,9 @@ Aegis is a self-hosted [Model Context Protocol](https://modelcontextprotocol.io)
 |---|---|
 | **Event** | Amazon Developer Hackathon "Build, Ship, Shape" |
 | **Track** | Alexa+ (self-hosted MCP server, Streamable HTTP, MCP 2025-11-25) |
-| **Mini challenges** | None entered |
+| **Mini challenges** | Open Source (this new MIT-licensed repo). AWS Builder not entered. |
 | **Deadline** | 2026-10-23, 12:00 PT |
-| **Pitch video** | 2:45 pitch: [`docs/PITCH_SCRIPT.md`](docs/PITCH_SCRIPT.md). Recording steps: [`docs/RECORDING_GUIDE.md`](docs/RECORDING_GUIDE.md) |
+| **Demo video** | <https://youtu.be/Q9PKUMtdJvA> (1:56). Script: [`docs/PITCH_SCRIPT.md`](docs/PITCH_SCRIPT.md). Recording steps: [`docs/RECORDING_GUIDE.md`](docs/RECORDING_GUIDE.md) |
 | **Demo** | One spoken sentence: *"Check the voicemail I just got from the IRS."* Then why it's a scam, a read-back, and a "yes"-gated block, in the Aegis Voice Simulator with the live MCP traffic beside it. |
 | **Try it** | `pip install -e ".[dev]"`, then `aegis-server` and open <http://127.0.0.1:8000>. No accounts, keys or hosting needed. |
 | **Alexa+ access** | The Alexa+ MCP Toolkit, CLI and web simulator are preview-only (hackathon FAQ), so the demo uses our own web MCP client, the path the FAQ describes. The add-on kit for a real deploy is ready in [`docs/ALEXA_DEPLOY.md`](docs/ALEXA_DEPLOY.md) for when access opens. |
@@ -47,7 +47,7 @@ Aegis is a self-hosted [Model Context Protocol](https://modelcontextprotocol.io)
 - **Speech-first.** Every result carries a short `say` sentence written to be read aloud. It never includes IDs, tokens, jargon or references to a screen, and offers at most 5 options.
 
 ### What it doesn't do yet
-- **Actions are simulated.** Receipts carry `simulated: true`, and Alexa says so. Nothing is really blocked or reported.
+- **Actions are simulated.** Receipts carry `simulated: true`, and the spoken reply says so. Nothing is really blocked or reported.
 - **Voicemails are 8 scripted text fixtures** (5 scam, 3 legitimate), not audio.
 - **English only.** Caller metadata is trusted.
 - **Pending approvals live in memory** and vanish on restart.

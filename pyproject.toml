@@ -5,7 +5,7 @@
 # single source of truth for the Python environment: what Aegis is, what it
 # depends on, and the product agreements the build must honor.
 #
-# Build status as of 2026-10-03 (verified on Python 3.12.15, mcp 2.2.0):
+# Build status as of 2026-10-19 (verified from a fresh clone on Python 3.12.2, mcp 2.2.0):
 #   - tests/: 336/336 pass (engine, handlers, hardening, stress, resilience, ecosystem, telemetry/security, simulator)
 #   - server/: 23/23 smoke checks pass (server/smoke_test.py), incl. the Ring -> Bee -> Fire TV chain
 # =============================================================================
@@ -149,7 +149,7 @@ deadline = "2026-10-23T12:00:00-07:00"
 repo_visibility = "public"  # decided 2026-10-03: public MIT repo `aegis-mcp` (qualifies for the Open Source mini challenge)
 video = "public, English, under 3 minutes, YouTube or Vimeo"
 submission_fields = ["repo link", "video link", "text description", "product feedback", "track selection (Alexa+)"]
-mini_challenges = []          # decided 2026-10-05: Alexa+ track only; AWS Builder and Open Source skipped
+mini_challenges = ["open_source"]  # entered at submission 2026-10-19 (this new MIT repo qualifies as-is); AWS Builder skipped
 mcp_spec_minimum = "2025-11-25"  # hackathon rule; server also accepts 2025-03-26 (documented Alexa+ handshake)
 video_must_show = "the server working through a real MCP client: our web voice simulator at /simulator"  # hackathon FAQ: Alexa+ dev tools are preview-only, a web MCP client page qualifies
 friction_log = "optional, drafted, worth up to 10% judging bonus"
