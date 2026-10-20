@@ -362,15 +362,33 @@ function pickVoice() {
   voice = preferred.map((name) => voices.find((v) => v.name.includes(name))).find(Boolean) || voices[0] || null;
 }
 
+// Safari only lets a page speak after it has spoken inside a click or key press. Replies arrive after a
+// network round trip, outside that gesture, so the first click primes speech with a silent utterance.
+let speechUnlocked = false;
+function unlockSpeech() {
+  if (speechUnlocked || !("speechSynthesis" in window)) return;
+  const silent = new SpeechSynthesisUtterance(" ");
+  silent.volume = 0;
+  speechSynthesis.speak(silent);
+  speechUnlocked = true;
+}
+
+let currentUtterance = null; // held so the engine doesn't garbage-collect it mid-sentence and skip onend
 function speak(text) {
   if (!els.speak.checked || !("speechSynthesis" in window)) return;
-  speechSynthesis.cancel();
+  const interrupting = speechSynthesis.speaking || speechSynthesis.pending;
+  if (interrupting) speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   if (voice) utterance.voice = voice;
   utterance.rate = 0.95;
   utterance.onstart = () => els.ring.classList.add("speaking");
   utterance.onend = utterance.onerror = () => els.ring.classList.remove("speaking");
-  speechSynthesis.speak(utterance);
+  currentUtterance = utterance;
+  // Safari drops an utterance queued in the same tick as cancel(), so give the cancel a moment.
+  setTimeout(() => {
+    speechSynthesis.resume();
+    speechSynthesis.speak(utterance);
+  }, interrupting ? 120 : 0);
 }
 
 // --- speech in --------------------------------------------------------------------------------------------
@@ -409,6 +427,7 @@ function setupMic() {
   els.mic.addEventListener("click", () => {
     if (listening) return recognition.stop();
     if ("speechSynthesis" in window) speechSynthesis.cancel();
+    unlockSpeech();
     listening = true;
     els.input.value = "";
     els.mic.classList.add("on");
@@ -422,6 +441,7 @@ function setupMic() {
 async function handle(raw) {
   const text = raw.trim();
   if (!text || busy) return;
+  unlockSpeech();
   els.input.value = "";
   addBubble("user", text);
 
